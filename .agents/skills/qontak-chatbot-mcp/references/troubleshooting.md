@@ -148,6 +148,18 @@ What to do:
 - for file-backed attachments, allow multipart routing
 - for conversation closure, allow v3 JSON routing
 
+### Interactive button or list rejected by validation
+
+Cause:
+- the `interactive` payload violates the enforced dry-schema rules
+
+What to do:
+- ensure exactly one of `interactive.button` or `interactive.list` is set, not both
+- supply a non-empty `button.actions` list with 1 to 3 actions excluding any `action_status="DELETE"` (an empty `[]` is rejected)
+- set `button.format` to one of `text`, `document`, `image`, `video`
+- if `button.attachment` is present, use `type` in {document, image, video}
+- keep the char limits: button `body_text` <= 1024, `header_text` <= 60, action `title` <= 20; list `body_text` <= 1024, `button_text` <= 20, `header_text` <= 60, item `title` <= 24, item `description` <= 72
+
 ### Successful write but tree verification warnings appeared
 
 Cause:
@@ -207,7 +219,7 @@ What to do:
 3. If parent children are still unclear, read `get_path_tree(path_id, preferred_tree_version="v3")` as the primary branch-truth source
 4. If `user_input` exists but child `bot_response` is missing, repair with `create_bot_response` on that `user_input` and `preferred_tree_version="v3"`
 5. If the branch already exists with child reply, treat the tool call as successful despite the error response
-6. If needed for additional compatibility context, read `get_path_tree(path_id, preferred_tree_version="v2")`
+6. v3 is the only tree route the backend serves; legacy v2/v1 tree reads now 404, so there is no v2 fallback to read
 
 ### `add_branch` error "Data user_input already exist with input = X"
 

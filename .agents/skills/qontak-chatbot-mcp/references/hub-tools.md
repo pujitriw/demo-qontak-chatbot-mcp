@@ -63,7 +63,9 @@ Use it when the task needs Hub lookups or uploads before a chatbot edit flow, es
 ### `upload_hub_message_file`
 
 - endpoint: `POST /core/v1/file_uploader/message`
+- signature: `upload_hub_message_file(file_name, content_bytes_base64, content_type, payload=None)`
 - common role: attachment preparation before chatbot node updates
+- param note: the optional extra-form-fields param is `payload` (not `metadata`); pass any additional multipart form fields through it
 - transport rule: keep the MCP contract on explicit file-content inputs and let the server translate them to multipart upstream
 - result keys: `upload`
 

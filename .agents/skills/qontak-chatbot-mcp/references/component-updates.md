@@ -130,7 +130,7 @@ For those, create the node first if needed, then update it.
       "header_text": "Header",
       "body_text": "Choose one option",
       "attachment": {
-        "channel_attachment_id": 1,
+        "channel_attachment_id": "att-1",
         "name": "sample.png",
         "type": "image",
         "url": "https://example.com/image.png"
@@ -181,6 +181,29 @@ Note:
   }
 }
 ```
+
+### Interactive validation rules
+
+Interactive payloads are validated client-side to match the chatbot dry-schema. The constraints are enforced before the write is sent:
+
+- exactly one of `button` or `list` must be present; a cleared/no-interactive value is `{"button": null, "list": null}` or an empty object
+- button:
+  - `format` is required and must be one of `text`, `document`, `image`, `video`
+  - `header_text` optional, max 60 chars
+  - `body_text` required, max 1024 chars
+  - `actions` must contain 1 to 3 actions excluding any with `action_status="DELETE"` (an empty `actions` array is invalid); each action `title` max 20 chars
+  - optional `attachment`: `channel_attachment_id` (string), `name`, `type` one of `document`, `image`, `video`, and `url`
+- list:
+  - `header_text` optional, max 60 chars
+  - `body_text` required, max 1024 chars
+  - `button_text` required, max 20 chars
+  - `sections` requires at least 1 section; each section `items` requires at least 1 item
+  - each item `title` required, max 24 chars; item `description` optional, max 72 chars
+
+### Creating vs updating interactive
+
+- a brand-new interactive (`button` or `list`) is created inline only through the v1 create path (`create_bot_response`)
+- `update_bot_response` and `create_root_reply` use the v2 write, which only updates an interactive that already exists, matched by `id` — they cannot create a brand-new interactive from scratch
 
 ### Attachments
 

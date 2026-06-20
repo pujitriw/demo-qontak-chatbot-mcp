@@ -165,7 +165,9 @@ Important:
     "button": {
       "format": "text",
       "body_text": "Choose one option",
-      "actions": []
+      "actions": [
+        { "title": "Check status", "action_status": "CREATE" }
+      ]
     },
     "list": null
   },
@@ -177,6 +179,45 @@ Important:
 
 Note:
 - `content_type_version` should be treated as an opaque value and passed through as provided
+
+Interactive validation (enforced, matches the chatbot dry-schema):
+- supply exactly one of `interactive.button` or `interactive.list`
+- `button.format` is required and must be one of `text`, `document`, `image`, `video`
+- `button.body_text` <= 1024; `button.header_text` <= 60
+- `button.actions` must hold 1 to 3 actions excluding any with `action_status="DELETE"`, so a non-empty actions list is required (not an empty array); each action `title` <= 20
+- optional `button.attachment` is `{ channel_attachment_id (string), name, type, url }` with `type` in {document, image, video}
+- `list.body_text` (required) <= 1024; `list.button_text` (required) <= 20; `list.header_text` <= 60
+- `list.sections` >= 1 and each section `items` >= 1; each item `title` (required) <= 24 and `description` <= 72
+
+### `WhatsAppFlowPayload`
+
+```json
+{
+  "name": "Order Status Flow",
+  "channel_integration_id": 123,
+  "previous_bot_response_id": 456,
+  "whatsapp_flow": {
+    "template_id": "tmpl_123",
+    "external_id": "ext_123",
+    "template_name": "order_status_flow",
+    "header_text": "Order Status",
+    "message_content": "Tap below to check your order",
+    "button_text": "Check status",
+    "next_intent_type": "BRANCH"
+  }
+}
+```
+
+Use this shape for `create_whatsapp_flow`.
+
+Important:
+- parent level requires `name`, and exactly one of `previous_bot_response_id` or `previous_user_input_id` (a `parent` object `{ type, id }` is also accepted)
+- `channel_integration_id` is injected from the path metadata when omitted
+- nested `whatsapp_flow` requires `template_id`, `external_id`, `template_name`, `message_content`, `button_text` (<=60), and `next_intent_type` from {TEXT, BUTTON, LIST, AI_ASSIST, BRANCH}; `header_text` is optional
+- the write targets v1 (`POST /v1/bot_responses/whatsapp_flow`); the read-back tree is v3
+
+WhatsApp Flow update:
+- use `update_whatsapp_flow(path_id, bot_response_id, changes)`; all nested `whatsapp_flow` fields are optional in the `changes` slice (patch only what you need), and read-back is via v3
 
 ## Starter Requests
 
@@ -359,7 +400,9 @@ Notes:
         "format": "text",
         "header_text": "Order Menu",
         "body_text": "Choose one option",
-        "actions": []
+        "actions": [
+          { "title": "Check status", "action_status": "CREATE" }
+        ]
       }
     }
   }
@@ -405,8 +448,7 @@ Hub request shapes should follow the documented MCP defaults in this skill bundl
 {
   "payload": {
     "offset": 1,
-    "limit": 10,
-    "query": ""
+    "limit": 10
   }
 }
 ```
@@ -486,7 +528,7 @@ Use this as the default payload when the caller does not specify other paginatio
   "file_name": "guide.pdf",
   "content_type": "application/pdf",
   "content_bytes_base64": "<base64>",
-  "metadata": {
+  "payload": {
     "source": "attachment-form"
   }
 }

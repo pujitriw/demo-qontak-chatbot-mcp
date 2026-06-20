@@ -96,7 +96,7 @@ After the server is connected in the client, start with a safe read call:
 - `list_content_types(enabled=true)` if you only need connectivity confirmation
 - `get_hub_client_config()` if you need to confirm Hub connectivity first
 - `get_path_detail(path_id)` if you already know a valid path id
-- `get_path_tree(path_id, preferred_tree_version="v2")` if you need graph visibility immediately
+- `get_path_tree(path_id, preferred_tree_version="v3")` if you need graph visibility immediately
 
 ## Runtime Behavior That Affects Tool Usage
 
@@ -107,8 +107,8 @@ After the server is connected in the client, start with a safe read call:
 
 ### Tree reads
 
-- tree reads prefer `v2`
-- fallback order is `v2`, then `v1`, then `v3`
+- tree reads prefer `v3` — the only backend version serving `tree_diagram`
+- the `v1`/`v2` tree routes were retired and now 404, so they act only as dead fallbacks
 - the actual version used is returned in `meta.tree_version_used`
 
 ### Hub routing

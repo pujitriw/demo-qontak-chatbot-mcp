@@ -16,26 +16,28 @@ Notes:
 
 ### `get_path_detail(path_id)`
 
-Use when you need normalized path metadata from `/v1/paths/{id}`.
+Use when you need normalized path metadata from `/v2/paths/{id}`.
 
 UI wording note:
 - in the frontend, this is Conversation detail
 
 Notes:
 - returns `result.path_metadata`
-- uses `meta.api_version_used = "v1"`
+- uses `meta.api_version_used = "v2"`
 - useful before any path-level update
 
-### `get_path_tree(path_id, preferred_tree_version="v2")`
+### `get_path_tree(path_id, preferred_tree_version="v3")`
 
 Use when you need the normalized conversation graph for one path.
 
 Notes:
 - returns `result.tree`
-- default tree preference is `v2`
+- default tree preference is `v3`
+- `v3` is the only backend version serving `tree_diagram`; the `v1`/`v2` tree routes were retired and now 404 (dead fallbacks only)
+- `v3` also uniquely surfaces interactive and `whatsapp_flow` node detail
 - actual fallback outcome is returned in `meta.tree_version_used`
 
-### `get_node_detail(path_id, node_type, node_id, preferred_tree_version="v2")`
+### `get_node_detail(path_id, node_type, node_id, preferred_tree_version="v3")`
 
 Use when you need one normalized node plus its direct children.
 
@@ -105,7 +107,7 @@ Important:
 - when `operational_time_type` is `date_range`, each date range item must use valid datetime strings and `start_date < end_date`
 - merged `operational_time_type` must remain valid after the change
 
-### `publish_path(path_id, strategy="auto", body=None, preferred_tree_version="v2")`
+### `publish_path(path_id, strategy="auto", body=None, preferred_tree_version="v3")`
 
 Use when draft changes should be published and verified with a refreshed tree read.
 
@@ -113,7 +115,7 @@ Notes:
 - returns refreshed `path_metadata` and `tree`
 - `strategy` can be `v1`, `v2`, or `auto`
 
-### `discard_path_draft(path_id, body=None, preferred_tree_version="v2")`
+### `discard_path_draft(path_id, body=None, preferred_tree_version="v3")`
 
 Use when draft changes should be discarded and verified with a refreshed tree read.
 
@@ -122,7 +124,7 @@ Notes:
 
 ## Conversation Write Tools
 
-### `create_root_reply(path_id, bot_response, preferred_tree_version="v2")`
+### `create_root_reply(path_id, bot_response, preferred_tree_version="v3")`
 
 Use only for the seeded root bot response that already exists after path creation.
 
@@ -131,7 +133,7 @@ Notes:
 - patches the existing root through the FE-aligned v2 flow
 - resolves content type at tool entry
 
-### `create_bot_response(path_id, parent, bot_response, preferred_tree_version="v2")`
+### `create_bot_response(path_id, parent, bot_response, preferred_tree_version="v3")`
 
 Use when you need a non-root child reply under an existing `bot_response` or `user_input` node.
 
@@ -143,7 +145,7 @@ Notes:
 - intended for text-content child creation plus the JSON-safe component groups validated for child create
 - for interactive, attachment, CRM, knowledge, or conversation-closure edits, update an existing node instead
 
-### `add_branch(path_id, parent_bot_response_id, user_input, bot_response, preferred_tree_version="v2")`
+### `add_branch(path_id, parent_bot_response_id, user_input, bot_response, preferred_tree_version="v3")`
 
 Use when the task is "add a branch under this bot response and attach the next reply".
 
@@ -159,7 +161,7 @@ Notes:
 - do NOT use `is_default` with `update_user_input`; use `set_default_user_input` for toggling later
 - the user_input creation may return an error like "Created user input did not include an id", but the branch may still be created (verify with re-read)
 
-### `update_bot_response(path_id, bot_response_id, bot_response, transport="auto", preferred_tree_version="v2")`
+### `update_bot_response(path_id, bot_response_id, bot_response, transport="auto", preferred_tree_version="v3")`
 
 Use when editing content and component configuration for an existing bot response.
 
@@ -173,7 +175,7 @@ Notes:
 - this is the main tool for advanced component edits
 - returns the refreshed node and tree
 
-### `update_user_input(path_id, user_input_id, changes, preferred_tree_version="v2")`
+### `update_user_input(path_id, user_input_id, changes, preferred_tree_version="v3")`
 
 Use for ordinary user input edits.
 
@@ -181,11 +183,11 @@ Important:
 - do not pass `is_default` here
 - default toggling belongs to `set_default_user_input`
 
-### `set_default_user_input(path_id, user_input_id, is_default=true, preferred_tree_version="v2")`
+### `set_default_user_input(path_id, user_input_id, is_default=true, preferred_tree_version="v3")`
 
 Use to toggle the default branch state for one user input.
 
-### `delete_user_input(path_id, user_input_id, mode="single_block", preferred_tree_version="v2")`
+### `delete_user_input(path_id, user_input_id, mode="single_block", preferred_tree_version="v3")`
 
 Use to delete a user input.
 
@@ -198,7 +200,7 @@ Notes:
 - safe default is `single_block`
 - `meta.api_version_used` varies by mode
 
-### `delete_bot_response(path_id, bot_response_id, mode="single", preferred_tree_version="v2")`
+### `delete_bot_response(path_id, bot_response_id, mode="single", preferred_tree_version="v3")`
 
 Use to delete a non-root bot response.
 
@@ -210,9 +212,32 @@ Modes:
 Important:
 - root bot responses cannot be deleted through this tool
 
+## WhatsApp Flow Tools
+
+### `create_whatsapp_flow(path_id, whatsapp_flow, parent=None, preferred_tree_version="v3")`
+
+Use when you need to attach a WhatsApp Flow bot response under an existing node.
+
+Notes:
+- writes to v1 `POST /v1/bot_responses/whatsapp_flow` (`meta.api_version_used = "v1"`)
+- read-back is verified via the v3 tree
+- `whatsapp_flow` nested object required fields: `template_id`, `external_id`, `template_name`, `message_content`, `button_text` (<= 60 chars), `next_intent_type` in `{TEXT, BUTTON, LIST, AI_ASSIST, BRANCH}`
+- `whatsapp_flow.header_text` is optional
+- parent-level fields: `name`; `channel_integration_id` (injected from the path when omitted); and exactly one of `previous_bot_response_id` / `previous_user_input_id`
+- alternatively pass `parent` as `{type, id}` to express the parent linkage
+
+### `update_whatsapp_flow(path_id, bot_response_id, changes, preferred_tree_version="v3")`
+
+Use when editing an existing WhatsApp Flow bot response.
+
+Notes:
+- writes to v1 `PATCH /v1/bot_responses/whatsapp_flow/{id}` (`meta.api_version_used = "v1"`)
+- read-back is verified via the v3 tree
+- `changes` accepts the same nested `whatsapp_flow` fields as create, all optional
+
 ## Workflow Tools
 
-### `workflow_create_path_with_reply(path, root_reply=None, preferred_tree_version="v2")`
+### `workflow_create_path_with_reply(path, root_reply=None, preferred_tree_version="v3")`
 
 Use when the task is "create a path and set the first reply".
 
@@ -233,7 +258,7 @@ Warnings:
 - after a failed call, verify whether the path already exists before retrying
 - successful creation still leaves the Conversation in draft state until a later `publish_path`
 
-### `workflow_add_branch_with_reply(path_id, parent_bot_response_id, branch, preferred_tree_version="v2")`
+### `workflow_add_branch_with_reply(path_id, parent_bot_response_id, branch, preferred_tree_version="v3")`
 
 Use when the task is "add a user option and its reply".
 
@@ -252,7 +277,7 @@ Notes:
 - verify ambiguous outcomes with `get_node_detail` on the parent bot response and fall back to `get_path_tree` when the parent read is incomplete or unclear
 - duplicate-input errors after retry usually mean a previous call already created the branch trigger
 
-### `workflow_change_node_component(path_id, bot_response_id, bot_response, transport="auto", preferred_tree_version="v2")`
+### `workflow_change_node_component(path_id, bot_response_id, bot_response, transport="auto", preferred_tree_version="v3")`
 
 Use when the task is phrased as "change the component or payload on this existing node".
 
@@ -340,7 +365,7 @@ Notes:
 - default payload: `offset=1`, `limit=100`, `query=""`
 - returns `result.tags` and optional `result.pagination`
 
-### `upload_hub_message_file(file_name, content_type, content_bytes_base64, metadata=None)`
+### `upload_hub_message_file(file_name, content_bytes_base64, content_type, payload=None)`
 
 Use when the FE flow uploads an attachment before editing a bot response.
 

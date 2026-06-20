@@ -8,7 +8,7 @@ UI wording note:
 Use this sequence before targeted edits.
 
 1. Call `get_path_detail(path_id)`.
-2. Call `get_path_tree(path_id, preferred_tree_version="v2")`.
+2. Call `get_path_tree(path_id, preferred_tree_version="v3")`.
 3. If the task targets one branch or one node, call `get_node_detail(path_id, node_type, node_id)`.
 4. Use returned `warnings` and `meta.tree_version_used` to understand fallback behavior before writing.
 
@@ -168,8 +168,8 @@ Note on `is_default`: The `add_branch` tool requires this field at creation time
 Retry safety:
 - do not blindly retry branch creation after an ambiguous error
 - first re-read the parent bot response with `get_node_detail(path_id, "bot_response", parent_bot_response_id)`
-- if that read still does not clearly show the new child, use `get_path_tree(path_id, preferred_tree_version="v3")` first
-- if additional compatibility context is still needed, then read `get_path_tree(path_id, preferred_tree_version="v2")`
+- if that read still does not clearly show the new child, use `get_path_tree(path_id, preferred_tree_version="v3")` as the authoritative check
+- v3 is the only tree route the backend serves; legacy v2/v1 tree reads now 404, so there is no v2 fallback to fall back to
 - if a retry now fails with `Data user_input already exist with input = X`, treat that as evidence that an earlier call already created at least the branch trigger
 
 ## Create a Simple Non-Root Child Reply
@@ -183,6 +183,40 @@ Use this only when:
 - the payload fits the validated child-create slice
 
 If the target child needs advanced interactive or attachment behavior, create a simple child first and then update it through `update_bot_response`.
+
+## Create or Update a WhatsApp Flow node
+
+Preferred tools:
+- `create_whatsapp_flow` to add a new WhatsApp Flow node
+- `update_whatsapp_flow` to change an existing WhatsApp Flow node
+
+Recommended `create_whatsapp_flow` request:
+
+```json
+{
+  "path_id": 123,
+  "whatsapp_flow": {
+    "name": "Order Status Flow",
+    "previous_bot_response_id": 456,
+    "whatsapp_flow": {
+      "template_id": "tmpl_123",
+      "external_id": "ext_123",
+      "template_name": "order_status_flow",
+      "header_text": "Order Status",
+      "message_content": "Tap below to check your order",
+      "button_text": "Check status",
+      "next_intent_type": "BRANCH"
+    }
+  }
+}
+```
+
+Notes:
+- the write goes to v1 (`POST /v1/bot_responses/whatsapp_flow`); the read-back tree is v3
+- `channel_integration_id` is injected from the path metadata when omitted at the parent level
+- the parent requires `name` and exactly one of `previous_bot_response_id` or `previous_user_input_id` (or a `parent` object `{ type, id }`)
+- the nested `whatsapp_flow` requires `template_id`, `external_id`, `template_name`, `message_content`, `button_text` (<=60), and `next_intent_type` from {TEXT, BUTTON, LIST, AI_ASSIST, BRANCH}; `header_text` is optional
+- use `update_whatsapp_flow(path_id, bot_response_id, changes)` to edit an existing flow node; read-back is via v3
 
 ## Change an Existing Node Component
 
@@ -232,7 +266,7 @@ Recommended request:
 {
   "path_id": 123,
   "strategy": "auto",
-  "preferred_tree_version": "v2"
+  "preferred_tree_version": "v3"
 }
 ```
 
@@ -245,7 +279,7 @@ Recommended request:
 ```json
 {
   "path_id": 123,
-  "preferred_tree_version": "v2"
+  "preferred_tree_version": "v3"
 }
 ```
 

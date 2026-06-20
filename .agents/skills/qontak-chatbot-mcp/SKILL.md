@@ -3,7 +3,7 @@ name: qontak-chatbot-mcp
 description: Use the Qontak Chatbot MCP server safely and effectively for path metadata, tree reads, branch editing, bot response updates, publish or discard workflows, and documented Hub lookup or upload tools. Use this skill whenever a task involves Qontak Chatbot path, conversation, or Hub operations through MCP tools.
 metadata:
   author: GitHub Copilot
-  version: "2026.4.23"
+  version: "2026.6.20"
   source: local
 ---
 
@@ -48,8 +48,8 @@ Do not spend time on install steps, shell commands, or workspace setup when this
 - `channels[]` is the selected Hub integration list attached to the path
 - `channel_integration_id` must be a valid chatbot-local integer id, but it does not need a 1:1 mapping to every item in `channels[]`
 - ids returned by `list_hub_integrations` are Hub ids and must not be reused as `channel_integration_id`
-- for branch verification and branch-repair flows, tree reads should prefer `v3`
-- for broad compatibility reads outside branch troubleshooting, tree reads can still start from `v2`
+- tree reads default to and should use `v3`: it is the only version that serves the tree diagram, so `v1` and `v2` tree reads are retired and now 404
+- `v3` is also the only tree version that surfaces interactive and `whatsapp_flow` detail, so it is correct for branch verification, branch-repair, and ordinary reads alike
 - every tool returns a normalized envelope with `ok`, `operation`, `result`, optional `warnings`, and `meta`
 - when a write succeeds with warnings, the mutation can still be valid even if tree verification had to fall back
 
@@ -62,6 +62,7 @@ Use this skill when the task involves any of these operations:
 - initialize a root reply
 - add a branch under an existing bot response
 - create or update a bot response node
+- create or update a WhatsApp Flow bot response node
 - update or delete user inputs
 - publish or discard path drafts
 - choose between direct mutation tools and higher-level workflow tools
@@ -99,7 +100,7 @@ Do not use this skill for:
 21. Treat `add_branch` and `workflow_add_branch_with_reply` as non-idempotent: ambiguous failures can still create the `user_input` or the full branch, and blind retries can trigger duplicate-input errors.
 22. When branch creation results are ambiguous, verify with `get_node_detail` on the parent bot response first and then use `get_path_tree(preferred_tree_version="v3")` as the primary graph check.
 23. If branch creation returns `Created user input did not include an id`, treat it as a likely partial success, not a hard rollback.
-24. For that partial-success error, verify in this order: `get_node_detail` on parent -> `get_path_tree(preferred_tree_version="v3")` -> `get_path_tree(preferred_tree_version="v2")` only if extra fallback context is needed.
+24. For that partial-success error, verify in this order: `get_node_detail` on parent -> `get_path_tree(preferred_tree_version="v3")`. `v3` is the authoritative graph check; a `v2` tree re-read is a legacy no-op fallback now that the `v2` tree route 404s.
 25. If `user_input` exists without child `bot_response`, repair by calling `create_bot_response` with parent `{ "type": "user_input", "id": ... }` and `preferred_tree_version="v3"`.
 26. Before creating a branch, preflight with `get_node_detail` on the parent and check whether the target `user_input.input` already exists.
 27. For multi-branch creation (for example numbered menus), run one branch at a time and complete verification or repair for each branch before moving to the next.
@@ -117,7 +118,7 @@ Do not use this skill for:
 
 - Read tools: `list_paths`, `get_path_detail`, `get_path_tree`, `get_node_detail`, `list_chatbot_channel_integrations`, `list_content_types`
 - Workflow tools: `workflow_create_path_with_reply`, `workflow_add_branch_with_reply`, `workflow_change_node_component`
-- Direct mutation tools: `create_path`, `update_path_metadata`, `create_root_reply`, `create_bot_response`, `add_branch`, `update_bot_response`, `update_user_input`, `set_default_user_input`, `delete_user_input`, `delete_bot_response`, `publish_path`, `discard_path_draft`
+- Direct mutation tools: `create_path`, `update_path_metadata`, `create_root_reply`, `create_bot_response`, `add_branch`, `update_bot_response`, `create_whatsapp_flow`, `update_whatsapp_flow`, `update_user_input`, `set_default_user_input`, `delete_user_input`, `delete_bot_response`, `publish_path`, `discard_path_draft`
 - Hub tools: `get_hub_user_profile`, `list_hub_users`, `get_hub_organization_me`, `list_hub_integrations`, `normalize_hub_integrations_to_path_channels`, `list_hub_divisions`, `list_hub_tags`, `upload_hub_message_file`, `get_hub_qontak_integration_uniq`, `get_hub_billing_info`, `get_hub_client_config`
 
 ### 3. Prepare normalized payloads
@@ -202,6 +203,7 @@ Use these rules without exception unless the user explicitly wants a lower-level
 
 - use `update_bot_response` or `workflow_change_node_component` for advanced edits on an existing bot response
 - advanced edits include interactive buttons, interactive lists, attachments, CRM payloads, API actions, knowledge sources, AI API knowledge, assignment, idle rules, auto resolve, and conversation closure
+- a brand-new interactive is created inline through `create_bot_response`; `update_bot_response` and `create_root_reply` update interactive that already exists, matched by id
 - if a payload is too advanced for child-create, create the child first and then update it
 
 ### Transport selection
@@ -217,7 +219,7 @@ Use these rules without exception unless the user explicitly wants a lower-level
 ### Read a conversation safely
 
 1. `get_path_detail(path_id)`
-2. `get_path_tree(path_id, preferred_tree_version="v2")`
+2. `get_path_tree(path_id, preferred_tree_version="v3")`
 3. `get_node_detail(...)` only when the task targets a specific node or branch
 
 ### Create a conversation with the first message
@@ -242,10 +244,9 @@ Use these rules without exception unless the user explicitly wants a lower-level
 3. Pre-check whether the target `user_input.input` already exists on that parent
 4. If missing, call `workflow_add_branch_with_reply` (or `add_branch` for low-level control)
 5. If the result is ambiguous, re-read the parent bot response
-6. If the parent read is still unclear, re-read the full tree with `preferred_tree_version="v3"`
-7. If `v3` still needs extra compatibility context, re-read with `preferred_tree_version="v2"`
-8. If `user_input` exists but the child reply is missing, repair with `create_bot_response` on that `user_input` instead of recreating the branch
-9. Mark the branch done only after both `user_input` and child `bot_response` are present
+6. If the parent read is still unclear, re-read the full tree with `preferred_tree_version="v3"` as the authoritative graph check (a `v2` tree re-read is a legacy no-op now that the `v2` tree route 404s)
+7. If `user_input` exists but the child reply is missing, repair with `create_bot_response` on that `user_input` instead of recreating the branch
+8. Mark the branch done only after both `user_input` and child `bot_response` are present
 
 ### Add multiple numbered branches smoothly
 
@@ -311,9 +312,11 @@ Start with this decision tree:
    Use `workflow_change_node_component` or `update_bot_response`.
 8. Need to create a simple non-root child reply under an existing node?
    Use `create_bot_response`.
-9. Need to update only path or Conversation metadata?
+9. Need to create or update a WhatsApp Flow bot response node?
+   Use `create_whatsapp_flow` or `update_whatsapp_flow`.
+10. Need to update only path or Conversation metadata?
    Use `update_path_metadata`.
-10. Need to publish or discard draft changes?
+11. Need to publish or discard draft changes?
    Use `publish_path` or `discard_path_draft`.
 
 ## Tool Strategy
@@ -358,6 +361,8 @@ Use these when the workflow wrapper is too broad or the task is explicitly low-l
 - `create_bot_response`
 - `add_branch`
 - `update_bot_response`
+- `create_whatsapp_flow`
+- `update_whatsapp_flow`
 - `update_user_input`
 - `set_default_user_input`
 - `delete_user_input`
