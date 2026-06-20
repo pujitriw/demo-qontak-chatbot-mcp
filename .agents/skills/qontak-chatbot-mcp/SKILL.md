@@ -52,6 +52,28 @@ Do not spend time on install steps, shell commands, or workspace setup when this
 - `v3` is also the only tree version that surfaces interactive and `whatsapp_flow` detail, so it is correct for branch verification, branch-repair, and ordinary reads alike
 - every tool returns a normalized envelope with `ok`, `operation`, `result`, optional `warnings`, and `meta`
 - when a write succeeds with warnings, the mutation can still be valid even if tree verification had to fall back
+- `nlp.confidence_level` is a 0..1 float; the FE shows it as a 1..100 percent, so convert before writing (FE 90% -> `0.9`)
+
+## Content Types and Response Capabilities
+
+The FE conversation builder offers these response/content types: text, button, list, ai_assist, branch, whatsapp_flow, ai_agent, and voice. The MCP covers only a subset of these. Use this catalog to know when the MCP can replicate an FE flow and when it cannot.
+
+What the MCP CAN build:
+- text: the `content_text` content type on any bot response (root or child).
+- button: a top-level `interactive.button` payload on a bot response.
+- list: a top-level `interactive.list` payload on a bot response.
+- whatsapp_flow: dedicated `create_whatsapp_flow` and `update_whatsapp_flow` tools.
+- media (image, document, video): sent as a `text` node carrying a top-level `attachments[]` array. Media is not a separate content type; it rides on a text node.
+
+What the MCP CANNOT build (honest limitations):
+- voice: there is no voice node or voice action. `bot_type="voice"` is accepted only at the path level, not as a buildable response node.
+- ai_agent: no tool or model exists for an ai_agent response node.
+- ai_assist as a standalone response node: only `knowledge_sources` and `ai_api_knowledge` exist as components on a text node; there is no standalone ai_assist node.
+- branch/condition response_conditions: there is no response-condition (branch-by-condition) capability.
+- exit-condition nodes: not supported.
+- there is no delete-path tool and no node-reordering tool.
+
+When a user wants any of the unsupported types above, say so plainly: the MCP cannot reproduce that part of the FE flow, and the work must be done in the FE.
 
 ## Use This Skill When
 
@@ -81,8 +103,8 @@ Do not use this skill for:
 2. Prefer `workflow_create_path_with_reply`, `workflow_add_branch_with_reply`, and `workflow_change_node_component` for common multi-step tasks.
 3. Treat the current frontend behavior as the primary behavioral contract for conversation editing.
 4. Use `create_root_reply` only for the seeded root node that already exists after path creation.
-5. Use `create_bot_response` only for non-root child creation, and keep it to the validated child-create slice.
-6. Use `update_bot_response` for advanced component edits such as interactive payloads, attachments, CRM, knowledge sources, API actions, and conversation closure.
+5. Use `create_bot_response` only for non-root child creation. It can carry a top-level `interactive` payload: a brand-new interactive is created inline through the v1 create path.
+6. Use `update_bot_response` and `create_root_reply` to update interactive that already exists, matched by id, and for other advanced component edits such as attachments, CRM, knowledge sources, API actions, and conversation closure.
 7. Inspect both `warnings` and `meta` on every response. They tell you which API and tree version were actually used.
 8. Prefer safe delete defaults unless the user explicitly asks for broader deletion.
 9. For Hub operations, prefer the documented default params and ordering in this skill bundle instead of inventing new query shapes.
@@ -106,6 +128,7 @@ Do not use this skill for:
 27. For multi-branch creation (for example numbered menus), run one branch at a time and complete verification or repair for each branch before moving to the next.
 28. Never blind-retry `add_branch` or `workflow_add_branch_with_reply` after `Created user input did not include an id`; first detect whether the `user_input` already exists on the parent.
 29. Treat a branch as complete only when both nodes exist: the `user_input` under the parent and its child `bot_response`.
+30. Place advanced families by write level. For NON-ROOT writes (`create_bot_response`, `update_bot_response`, `workflow_change_node_component`), the fields `interactive`, `attachments`, `crm_deal`, `conversation_closure`, `ai_api_knowledge`, `knowledge_sources`, `tag`, and `content_type_version` are TOP-LEVEL siblings of `content`/`components`; `components` accepts ONLY `assignment`, `auto_resolve`, `idle_rule`, and `api`. For ROOT writes (`create_root_reply` and the `root_reply` of `workflow_create_path_with_reply`), those same advanced families nest INSIDE `components`. See references/component-updates.md for examples.
 
 ## Quick Start
 
@@ -157,8 +180,8 @@ Minimal `ParentRef`:
 
 ### 5. Handle component-specific edits correctly
 
-- Use `update_bot_response` or `workflow_change_node_component` for interactive buttons or lists, attachments, CRM payloads, API actions, knowledge-source payloads, AI API knowledge, and conversation closure.
-- Keep `create_bot_response` for the narrower child-create slice.
+- Use `update_bot_response` or `workflow_change_node_component` to update existing interactive buttons or lists (matched by id), attachments, CRM payloads, API actions, knowledge-source payloads, AI API knowledge, and conversation closure.
+- Use `create_bot_response` for non-root child creation; it can also create a brand-new interactive inline through the v1 create path.
 
 ### 6. Check failure modes
 

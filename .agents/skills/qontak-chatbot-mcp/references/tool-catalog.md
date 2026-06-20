@@ -2,14 +2,22 @@
 
 ## Read Tools
 
-### `list_paths(...)`
+### `list_paths(channel_integration_id, page=1, limit=20, order_by="name", order_direction=None, query=None)`
 
 Use when you need to:
 - find an existing Conversation by name
 - verify whether a failed create workflow already produced a path
 - inspect response channel metadata and recover `integration_id` values for later writes
 
+Inputs:
+- `channel_integration_id`: required chatbot-local integer id (from `list_chatbot_channel_integrations`)
+- `page`, `limit`, `order_by`, `order_direction`, `query`: all optional
+
+Example call:
+- `list_paths(channel_integration_id=123, query="Order status", limit=20)`
+
 Notes:
+- returns a paginated list of paths
 - useful fallback when `get_path_detail` or Hub integration lookup tools are unavailable
 - response channel objects include both chatbot-local `id` and Hub `integration_id`
 - when reusing channel data for a write, map response `integration_id` to request `channels[].id`
@@ -65,6 +73,8 @@ Use when you need to inspect or confirm content type codes before composing a bo
 Notes:
 - returns `result.items`
 - useful when debugging unresolved `content_type_code`
+- the bot-response build path uses `content_type_code` values `text`, `button`, `list`, and `ai_assist`; resolve the live set via this tool
+- `button` and `list` require a matching `interactive` payload
 
 ## Path Tools
 
@@ -179,8 +189,17 @@ Notes:
 
 Use for ordinary user input edits.
 
+Accepted `changes` fields (validates with extra=forbid, so anything else is rejected):
+- `input`: string, the user-facing trigger text
+- `organization_entity_id`: integer
+- `utterances`: list of `{ "text": "...", "organization_nlp_connector_id"?: int }`
+- `organization_nlp_connector_id`: integer
+
+Example `changes`:
+- `{ "input": "Check status", "utterances": [ { "text": "where is my order" } ] }`
+
 Important:
-- do not pass `is_default` here
+- `is_default`, `channel_integration_id`, and `bot_response_id` are NOT accepted here and will be rejected
 - default toggling belongs to `set_default_user_input`
 
 ### `set_default_user_input(path_id, user_input_id, is_default=true, preferred_tree_version="v3")`
@@ -341,10 +360,17 @@ Notes:
 
 Use when selected Hub integrations need to become the minimal `channels[]` payload for path create or update.
 
+Input shape:
+- `integrations`: a top-level list argument; each item needs non-blank `id`, `name` (or `label`), and `target_channel`
+- example: `[ { "id": "<hub-uuid>", "name": "WhatsApp Sales", "target_channel": "whatsapp" } ]`
+
+Output shape:
+- `{ "channels": [ { "id": "<hub-uuid>", "name": "WhatsApp Sales", "target_channel": "whatsapp" }, ... ] }`
+
 Notes:
 - keeps only `id`, `name`, and `target_channel`
 - falls back from `name` to `label` when needed
-- output can be copied directly into `path.channels` or `changes.channels`
+- output `channels` can be copied directly into `path.channels` or `changes.channels`
 - this does not resolve `channel_integration_id`; use `list_chatbot_channel_integrations` for that separate integer id
 
 ### `list_hub_divisions(payload=None)`
@@ -380,8 +406,8 @@ Use when Qontak CRM forms need uniq-state lookup.
 
 Notes:
 - endpoint: `GET /core/v1/qontak/integration/uniq`
+- `payload` is required (passed as query params); there is no default, so it must be supplied
 - returns `result.integration`
-- no FE default params are confirmed
 
 ### `get_hub_billing_info(payload=None)`
 

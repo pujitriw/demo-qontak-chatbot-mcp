@@ -13,7 +13,7 @@ UI wording note:
   "bot_type": "chat",
   "use_keyword": true,
   "keywords": ["customer service", "help"],
-  "operational_time_type": "date_range",
+  "operational_time_type": "24hours",
   "channels": [
     {
       "id": "1",
@@ -42,8 +42,10 @@ Important:
 - response `channels[].id` is the chatbot-local `integrations.id`
 - response `channels[].integration_id` is the original Hub integration UUID
 - `operational_time_type` is a fixed CRUD enum with allowed values `24hours`, `schedule`, and `date_range`
+- when `operational_time_type` is `date_range`, `date_ranges` must be non-empty; when it is `schedule`, `schedules` must be non-empty; `24hours` (shown here) requires neither, so leaving both empty is valid
 - frontend path CRUD presents those values directly in the Conversation form and sends the chosen raw value in create and update payloads
 - backend path CRUD validates the same enum inline; there is no separate list endpoint for these values
+- `nlp.confidence_level` is a `0..1` float in the MCP (e.g. `0.85`, `0.9`), whereas the FE form shows a `1..100` percentage; convert the FE percent to a `0..1` fraction before sending (e.g. `90%` -> `0.9`), never send `90`
 
 ### Minimal `channels[]` item for path writes
 
@@ -325,6 +327,8 @@ Notes:
   "parent_bot_response_id": 456,
   "user_input": {
     "input": "Check order status",
+    "channel_integration_id": 123,
+    "is_default": false,
     "utterances": [
       {
         "text": "check my order",
@@ -388,12 +392,12 @@ Notes:
   "transport": "auto",
   "bot_response": {
     "name": "Order Status Menu",
+    "content_type_version": "2.1",
     "content": {
       "content_text": "Choose one option",
       "content_type_code": "button",
       "channel_integration_id": 123,
-      "is_send_message": true,
-      "content_type_version": "2.1"
+      "is_send_message": true
     },
     "interactive": {
       "button": {
@@ -543,13 +547,14 @@ Notes:
 ```json
 {
   "payload": {
-    "integration_id": "optional"
+    "integration_id": "<integration-uuid>"
   }
 }
 ```
 
 Notes:
-- no FE default payload is confirmed
+- `payload` is required (it has no default) and is passed through as query params
+- the exact keys depend on the caller's lookup; `integration_id` is shown as a concrete example, not a fixed contract
 - pass through only caller-supplied params
 
 ### Get Hub billing info

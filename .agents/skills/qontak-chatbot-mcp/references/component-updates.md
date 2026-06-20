@@ -8,6 +8,20 @@ The central rule is simple:
 - use `update_bot_response` or `workflow_change_node_component` for advanced component edits
 - do not overload `create_bot_response` with component families that are only validated on the existing-node update path
 
+## Field placement: root vs non-root
+
+This is the single most important correctness rule in this file. Where the advanced families live in the payload depends on whether the write targets a non-root node or a root reply.
+
+Non-root writes — `update_bot_response`, `create_bot_response`, `workflow_change_node_component` (all validate against `BotResponseWriteRequest`):
+- the families `interactive`, `attachments`, `crm_deal`, `conversation_closure`, `ai_api_knowledge`, `knowledge_sources`, `tag`, `content_type_version`, and `organization_entity_id` are TOP-LEVEL siblings of `content` and `components`
+- the `components` object is `extra=forbid` and accepts ONLY `assignment`, `auto_resolve`, `idle_rule`, and `api`
+- nesting `crm_deal` / `conversation_closure` / `ai_api_knowledge` (or any other advanced family) under `components` FAILS validation with `extra_forbidden`
+
+Root writes — `create_root_reply` / `workflow_create_path_with_reply` root_reply (validate against `RootBotResponseWriteRequest`):
+- those same advanced families (`interactive`, `crm_deal`, `ai_api_knowledge`, `attachments`, `knowledge_sources`) instead go INSIDE `components`
+
+The examples below show the non-root placement. For a root reply, move the advanced family inside `components`.
+
 ## Transport Selection
 
 ### `transport="auto"`
@@ -52,23 +66,17 @@ The validated FE-grounded update slice supports:
 
 ## Supported Component Families On Child Create
 
-The validated child-create slice is intentionally narrower.
+`create_bot_response` (child create) validates against `BotResponseWriteRequest`, so it can carry the same top-level families as an existing-node update. In particular it DOES accept a top-level `interactive` payload — a brand-new interactive (`button` or `list`) is created inline through the v1 create path.
 
 Use `create_bot_response` for:
 - text content
+- top-level `interactive`
 - `components.assignment`
 - `components.auto_resolve`
 - `components.idle_rule`
 - `components.api`
 
-Do not rely on child-create for:
-- interactive button or list payloads
-- attachments
-- CRM payloads
-- knowledge-source payloads
-- conversation closure
-
-For those, create the node first if needed, then update it.
+As a practical recommendation, prefer creating a simple node first and then updating it for advanced component families (attachments, CRM payloads, knowledge sources, conversation closure). This keeps the create step lean and isolates the advanced edit on the update path — but note this is guidance, not a model constraint: the child-create model does not reject `interactive`.
 
 ## Component Examples
 
@@ -212,8 +220,7 @@ Interactive payloads are validated client-side to match the chatbot dry-schema. 
   "attachments": [
     {
       "id": 1,
-      "channel_attachment_id": 10,
-      "url": "https://example.com/file.pdf",
+      "channel_attachment_id": "10",
       "name": "guide.pdf",
       "type": "document",
       "caption": "Guide",
@@ -228,27 +235,36 @@ Interactive payloads are validated client-side to match the chatbot dry-schema. 
 
 Rules:
 - use `upload.file_path` when the attachment must be uploaded through multipart
-- if `upload.file_path` is absent, URL-only or existing-asset attachment edits may remain on JSON-safe transport
+- if `upload.file_path` is absent, existing-asset attachment edits (referenced by `channel_attachment_id`) may remain on JSON-safe transport
+
+#### Sending media / attachments
+
+To send an image, document, or video, use a `text` content_type bot response with a top-level `attachments[]` array:
+- for a new file, set `attachments[].upload.file_path` — this is routed via the v3 multipart path by `transport="auto"`
+- to reuse an already-uploaded asset, reference it by `channel_attachment_id` (no `upload.file_path` needed)
+
+FE-allowed media:
+- image: jpg/png, max 5MB
+- document: pdf, max 100MB
+- video: mp4, max 16MB
 
 ### CRM deal
 
 ```json
 {
-  "components": {
-    "crm_deal": {
-      "enabled": true,
-      "is_contact_association": true,
-      "api_body": {
-        "name": "Support Case",
-        "crm_pipeline_id": 1,
-        "crm_pipeline_name": "Support",
-        "crm_stage_id": 2,
-        "crm_stage_name": "Open",
-        "creator_id": 3,
-        "creator_name": "Bot",
-        "crm_source_id": 4,
-        "crm_source_name": "Chatbot"
-      }
+  "crm_deal": {
+    "enabled": true,
+    "is_contact_association": true,
+    "api_body": {
+      "name": "Support Case",
+      "crm_pipeline_id": 1,
+      "crm_pipeline_name": "Support",
+      "crm_stage_id": 2,
+      "crm_stage_name": "Open",
+      "creator_id": 3,
+      "creator_name": "Bot",
+      "crm_source_id": 4,
+      "crm_source_name": "Chatbot"
     }
   }
 }
@@ -270,16 +286,14 @@ Rules:
 
 ```json
 {
-  "components": {
-    "ai_api_knowledge": {
-      "enabled": true,
-      "sources": [
-        {
-          "id": 1,
-          "api_connection_id": 20
-        }
-      ]
-    }
+  "ai_api_knowledge": {
+    "enabled": true,
+    "sources": [
+      {
+        "id": 1,
+        "api_connection_id": 20
+      }
+    ]
   }
 }
 ```
@@ -288,21 +302,19 @@ Rules:
 
 ```json
 {
-  "components": {
-    "conversation_closure": {
-      "enabled": true,
-      "action_type": "resolve",
-      "resolve": {
-        "text_message": "Conversation closed"
+  "conversation_closure": {
+    "enabled": true,
+    "action_type": "resolve",
+    "resolve": {
+      "text_message": "Conversation closed"
+    },
+    "agent_assignment": {
+      "is_auto_assign": true,
+      "division": {
+        "channel_division_id": "division-1"
       },
-      "agent_assignment": {
-        "is_auto_assign": true,
-        "division": {
-          "channel_division_id": "division-1"
-        },
-        "agent": {
-          "channel_agent_id": "agent-1"
-        }
+      "agent": {
+        "channel_agent_id": "agent-1"
       }
     }
   }
