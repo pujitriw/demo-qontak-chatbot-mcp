@@ -76,6 +76,19 @@ Notes:
 - the bot-response build path uses `content_type_code` values `text`, `button`, `list`, and `ai_assist`; resolve the live set via this tool
 - `button` and `list` require a matching `interactive` payload
 
+### `list_ai_agents(page=0, limit=20, order_by="name", order_direction=None, status=None, query=None)`
+
+Use to resolve an AI agent's `id` (UUID) before `create_ai_agent_response`; use that `id` as `contentable_id`.
+
+Inputs:
+- `order_by` must be one of: `name`, `created_by`, `status`, `usage`, `last_update`, `ai_agent_name`, `updated_at`
+- `page`, `limit`, `order_direction`, `status`, `query`: all optional
+
+Notes:
+- endpoint: `GET /v1/ai_agents` (`meta.api_version_used = "v1"`)
+- returns a paginated payload under `result.ai_agents` with `data[]` and `meta`
+- each `data[]` item has `id` (string UUID), `name`, `status`, `usages`, `usage_conversations`, `created_by`, `updated_at`
+
 ## Path Tools
 
 ### `create_path(path)`
@@ -155,6 +168,13 @@ Notes:
 - intended for text-content child creation plus the JSON-safe component groups validated for child create
 - for interactive, attachment, CRM, knowledge, or conversation-closure edits, update an existing node instead
 
+ai_assist support:
+- this tool now creates a knowledge-backed `ai_assist` reply: pass `content.content_type_code="ai_assist"` plus TOP-LEVEL `ai_api_knowledge` and/or `knowledge_sources` (siblings of `content`/`components`)
+- `ai_api_knowledge` shape: `{ "enabled": true, "sources": [{ "id": <int>, "api_connection_id": <int> }] }`
+- `knowledge_sources` shape: `[{ "id": <int> }]`
+- the backend `POST /v1/bot_responses` ai_assist branch wires the knowledge during create (`meta.api_version_used = "v1"`)
+- for the seeded root node use `create_root_reply` instead, where these knowledge families nest INSIDE `components`
+
 ### `add_branch(path_id, parent_bot_response_id, user_input, bot_response, preferred_tree_version="v3")`
 
 Use when the task is "add a branch under this bot response and attach the next reply".
@@ -170,6 +190,95 @@ Notes:
 - partial failures keep created ids and do not auto-delete them
 - do NOT use `is_default` with `update_user_input`; use `set_default_user_input` for toggling later
 - the user_input creation may return an error like "Created user input did not include an id", but the branch may still be created (verify with re-read)
+
+### `create_exit_condition(path_id, parent_bot_response_id, exit_condition, is_default=False, preferred_tree_version="v3")`
+
+Use when you need an exit-condition user input under a bot response (an intent that routes to a typed downstream node).
+
+`exit_condition` fields:
+- `name`: optional
+- `description`: optional
+- `trigger`: optional
+- `next_intent_type`: optional; one of `TEXT`, `BUTTON`, `LIST`, `BRANCH`, `AI_AGENT`, `WHATSAPP_FLOW` (auto-uppercased)
+- `ai_agent_id`: required only when `next_intent_type=AI_AGENT`
+
+Notes:
+- creates a user input with `response_type="exit_condition"` via `POST /v2/user_inputs` (`meta.api_version_used = "v2"`)
+- the tool auto-sets `parameters.path_id`; do not pass it yourself
+- when `next_intent_type=AI_AGENT`, the feature may be billing-gated and the backend can return 403
+- returns `result.user_input` and `result.tree`
+
+### `create_ai_agent_response(path_id, ai_agent, parent=None, preferred_tree_version="v3")`
+
+Use when you need an `ai_agent` reply node bound to a pre-existing AI agent.
+
+`ai_agent` fields:
+- `name`: required, must be unique
+- `contentable_id`: required; the agent UUID resolved from `list_ai_agents`
+- `content_type_version`: required (e.g. `1`)
+- `channel_integration_id`: injected from path metadata when omitted
+- exactly one of `previous_bot_response_id` / `previous_user_input_id` (or pass `parent` as `{ type, id }`)
+
+Notes:
+- writes to `POST /v2/bot_responses` with `contentable_type` fixed to `ai_agent` server-side (`meta.api_version_used = "v2"`)
+- the agent must already exist; resolve `contentable_id` with `list_ai_agents` first
+- the endpoint returns no id, so the tool resolves the new node by diffing the tree and matching the unique `name`
+- returns `result.bot_response` and `result.tree`
+
+### `create_branch_condition(path_id, branch, parent=None, preferred_tree_version="v3")`
+
+Use to create the CONDITION branch node (content type `branch`), whose API-driven `response_conditions` route to one downstream node per matched condition.
+
+Distinction:
+- this is DISTINCT from `add_branch`, which adds a conversational user-input tree branch (a menu choice). `create_branch_condition` builds the condition-routing node, not a menu option.
+
+`branch` fields:
+- `name`: required, must be unique
+- `channel_integration_id`: injected when omitted
+- exactly one of `previous_bot_response_id` / `previous_user_input_id` (or pass `parent` as `{ type, id }`)
+- `id`: optional; re-creates an existing intent as a branch, destroying its children
+- `api`: optional block (see below)
+
+`api` block fields:
+- `enabled`: required bool
+- `connection_id`, `path`, `method` (one of `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`COPY`/`HEAD`/`OPTIONS`): all required when `enabled=true`
+- optional: `headers`, `body`, `success_key`, `success_value`, `fallback_bot_response_id`, `is_api_entity`, `entities[]`, `response_conditions[]`
+
+`response_conditions[]` fields:
+- `sequence`: required int
+- `next_intent_type`: required on create; one of `TEXT`, `BUTTON`, `LIST`, `AI_ASSIST`
+- `is_default`: optional
+- `criterias[]`: see below
+
+`criterias[]` fields:
+- `key`: required
+- `operator`: required
+- `sequence`: required int
+- `value`: optional
+- `condition_operator`: optional
+
+Notes:
+- writes to `POST /v1/bot_responses/branches` (`meta.api_version_used = "v1"`)
+- the backend auto-creates each condition's downstream node
+- the endpoint returns no id, so the node is resolved by name diff
+- returns `result.bot_response` and `result.tree`
+
+### `update_branch_condition(path_id, bot_response_id, changes, preferred_tree_version="v3")`
+
+Use to edit an existing condition-branch node.
+
+`changes` fields:
+- `name`: required
+- `channel_integration_id`: injected when omitted
+- `api`: optional; same `api` / `response_conditions` / `criterias` structure as `create_branch_condition`
+
+Differences from create:
+- `next_intent_type` is not enforced on update
+- `response_conditions[]` and `criterias[]` may additionally carry `id` and `action_status` (`create` / `update` / `delete`) for diff-style edits of existing rows
+
+Notes:
+- writes to `PATCH /v1/bot_responses/branches/{bot_response_id}` (`meta.api_version_used = "v1"`)
+- returns `result.bot_response` and `result.tree`
 
 ### `update_bot_response(path_id, bot_response_id, bot_response, transport="auto", preferred_tree_version="v3")`
 

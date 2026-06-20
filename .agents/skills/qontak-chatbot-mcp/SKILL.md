@@ -56,24 +56,27 @@ Do not spend time on install steps, shell commands, or workspace setup when this
 
 ## Content Types and Response Capabilities
 
-The FE conversation builder offers these response/content types: text, button, list, ai_assist, branch, whatsapp_flow, ai_agent, and voice. The MCP covers only a subset of these. Use this catalog to know when the MCP can replicate an FE flow and when it cannot.
+The FE conversation builder offers these response/content types: text, button, list, ai_assist, branch, whatsapp_flow, ai_agent, and voice. The MCP now covers all of them except where the FE option has no backend counterpart. Use this catalog to know when the MCP can replicate an FE flow and when it cannot.
 
 What the MCP CAN build:
 - text: the `content_text` content type on any bot response (root or child).
 - button: a top-level `interactive.button` payload on a bot response.
 - list: a top-level `interactive.list` payload on a bot response.
-- whatsapp_flow: dedicated `create_whatsapp_flow` and `update_whatsapp_flow` tools.
 - media (image, document, video): sent as a `text` node carrying a top-level `attachments[]` array. Media is not a separate content type; it rides on a text node.
+- whatsapp_flow: dedicated `create_whatsapp_flow` and `update_whatsapp_flow` tools.
+- ai_assist: a real content type on any bot response. Pass `content.content_type_code="ai_assist"` plus the top-level `ai_api_knowledge` and/or `knowledge_sources` (siblings of `content`/`components`) to `create_bot_response` for a child node, or nest those families inside `components` for `create_root_reply`. The knowledge families are forwarded to the backend ai_assist branch, so the node is created with its knowledge wired.
+- ai_agent: `create_ai_agent_response` (POST /v2/bot_responses with `contentable_type="ai_agent"`). The agent must already exist; resolve its `contentable_id` with `list_ai_agents` first, and pass the agent's `content_type_version`.
+- branch/condition: `create_branch_condition` and `update_branch_condition` (POST/PATCH /v1/bot_responses/branches). These build the condition-branch node whose `api.response_conditions[].criterias[]` route to a downstream node per condition. This is DISTINCT from `add_branch`, which adds a conversational user-input tree branch.
+- exit-condition: `create_exit_condition` (a user input with `response_type="exit_condition"`). `next_intent_type` (TEXT/BUTTON/LIST/BRANCH/AI_AGENT/WHATSAPP_FLOW) auto-creates the downstream intent.
+- voice: not a separate node type. Configure it on a bot response with `update_bot_response` (it auto-routes to v3) by setting `conversation_closure` plus an audio `attachments[]` entry. `bot_type="voice"` remains a path-level setting.
+- intra-node ordering: the `sequence` field orders elements WITHIN a node — button actions, list items, and branch response-conditions/criterias. This is already supported on the relevant create/update payloads.
 
 What the MCP CANNOT build (honest limitations):
-- voice: there is no voice node or voice action. `bot_type="voice"` is accepted only at the path level, not as a buildable response node.
-- ai_agent: no tool or model exists for an ai_agent response node.
-- ai_assist as a standalone response node: only `knowledge_sources` and `ai_api_knowledge` exist as components on a text node; there is no standalone ai_assist node.
-- branch/condition response_conditions: there is no response-condition (branch-by-condition) capability.
-- exit-condition nodes: not supported.
-- there is no delete-path tool and no node-reordering tool.
+- tree-level node reordering / re-parenting: there is no backend endpoint to move a node to a new parent or change sibling order at the tree level. Tree topology is fixed at creation time through `previous_bot_response_id` / `previous_user_input_id`. Only intra-node `sequence` (above) exists. If a caller needs to re-parent, that is a backend change, not an MCP gap.
+- voice `action` (assign_to_call_group / end_the_call): the FE renders this dropdown but never sends it to the backend (it is hardcoded to a no-op on save). There is no backend counterpart, so the MCP intentionally omits it.
+- delete-path: there is no `delete_path` tool (intentionally out of scope for this MCP). Path deletion must be done in the FE.
 
-When a user wants any of the unsupported types above, say so plainly: the MCP cannot reproduce that part of the FE flow, and the work must be done in the FE.
+When a user wants one of the unsupported items above, say so plainly: the MCP cannot reproduce that part of the FE flow.
 
 ## Use This Skill When
 
@@ -141,7 +144,8 @@ Do not use this skill for:
 
 - Read tools: `list_paths`, `get_path_detail`, `get_path_tree`, `get_node_detail`, `list_chatbot_channel_integrations`, `list_content_types`
 - Workflow tools: `workflow_create_path_with_reply`, `workflow_add_branch_with_reply`, `workflow_change_node_component`
-- Direct mutation tools: `create_path`, `update_path_metadata`, `create_root_reply`, `create_bot_response`, `add_branch`, `update_bot_response`, `create_whatsapp_flow`, `update_whatsapp_flow`, `update_user_input`, `set_default_user_input`, `delete_user_input`, `delete_bot_response`, `publish_path`, `discard_path_draft`
+- Direct mutation tools: `create_path`, `update_path_metadata`, `create_root_reply`, `create_bot_response`, `add_branch`, `create_branch_condition`, `update_branch_condition`, `create_exit_condition`, `create_ai_agent_response`, `update_bot_response`, `create_whatsapp_flow`, `update_whatsapp_flow`, `update_user_input`, `set_default_user_input`, `delete_user_input`, `delete_bot_response`, `publish_path`, `discard_path_draft`
+- AI agent lookup: `list_ai_agents` (resolve `contentable_id` before `create_ai_agent_response`)
 - Hub tools: `get_hub_user_profile`, `list_hub_users`, `get_hub_organization_me`, `list_hub_integrations`, `normalize_hub_integrations_to_path_channels`, `list_hub_divisions`, `list_hub_tags`, `upload_hub_message_file`, `get_hub_qontak_integration_uniq`, `get_hub_billing_info`, `get_hub_client_config`
 
 ### 3. Prepare normalized payloads
@@ -341,6 +345,16 @@ Start with this decision tree:
    Use `update_path_metadata`.
 11. Need to publish or discard draft changes?
    Use `publish_path` or `discard_path_draft`.
+12. Need an ai_assist reply (knowledge-backed)?
+   Use `create_bot_response` with `content.content_type_code="ai_assist"` plus top-level `ai_api_knowledge` / `knowledge_sources` (or `create_root_reply` with those nested in `components`).
+13. Need an ai_agent reply node?
+   Resolve the agent with `list_ai_agents`, then `create_ai_agent_response` with `contentable_id` and `content_type_version`.
+14. Need a condition branch (route by API/criteria, not a user menu choice)?
+   Use `create_branch_condition` / `update_branch_condition`. For a conversational user-input menu branch, use `add_branch` / `workflow_add_branch_with_reply` instead.
+15. Need an exit-condition node?
+   Use `create_exit_condition` with an `exit_condition` carrying `next_intent_type`.
+16. Need a voice reply?
+   Use `update_bot_response` on a bot response with `conversation_closure` + an audio `attachments[]` entry (auto-routes to v3). There is no separate voice node and no `action`/call-group field.
 
 ## Tool Strategy
 
@@ -383,6 +397,11 @@ Use these when the workflow wrapper is too broad or the task is explicitly low-l
 - `create_root_reply`
 - `create_bot_response`
 - `add_branch`
+- `create_branch_condition`
+- `update_branch_condition`
+- `create_exit_condition`
+- `list_ai_agents`
+- `create_ai_agent_response`
 - `update_bot_response`
 - `create_whatsapp_flow`
 - `update_whatsapp_flow`

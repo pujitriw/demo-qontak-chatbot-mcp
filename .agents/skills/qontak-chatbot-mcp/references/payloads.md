@@ -221,6 +221,170 @@ Important:
 WhatsApp Flow update:
 - use `update_whatsapp_flow(path_id, bot_response_id, changes)`; all nested `whatsapp_flow` fields are optional in the `changes` slice (patch only what you need), and read-back is via v3
 
+### `AiAssistPayload`
+
+```json
+{
+  "name": "Knowledge Reply",
+  "content": {
+    "content_text": "Let me look that up for you",
+    "content_type_code": "ai_assist",
+    "channel_integration_id": 123,
+    "is_send_message": true
+  },
+  "ai_api_knowledge": {
+    "enabled": true,
+    "sources": [
+      {
+        "id": 1,
+        "api_connection_id": 20
+      }
+    ]
+  },
+  "knowledge_sources": [
+    {
+      "id": 1
+    }
+  ]
+}
+```
+
+Use this shape for `create_bot_response` with an `ai_assist` content type.
+
+Important:
+- `content.content_type_code` must be `ai_assist`
+- `ai_api_knowledge` and `knowledge_sources` are TOP-LEVEL siblings of `content`/`components` for child create
+- for the seeded root node (`create_root_reply`), nest those same families INSIDE `components` instead
+- the write targets v1 (`POST /v1/bot_responses`, ai_assist branch); the knowledge is wired during create
+
+### `ExitConditionPayload`
+
+```json
+{
+  "name": "Escalate to agent",
+  "description": "Hand off when the model cannot answer",
+  "trigger": "fallback",
+  "next_intent_type": "AI_AGENT",
+  "ai_agent_id": "0b8c2c8e-1f4a-4f1d-9c2a-2b6c0d3e4f5a"
+}
+```
+
+Use this shape as the `exit_condition` argument for `create_exit_condition`.
+
+Important:
+- `next_intent_type` is one of `TEXT`, `BUTTON`, `LIST`, `BRANCH`, `AI_AGENT`, `WHATSAPP_FLOW` (auto-uppercased)
+- `ai_agent_id` is required only when `next_intent_type=AI_AGENT`
+- `name`, `description`, and `trigger` are optional
+- creates a user input with `response_type="exit_condition"` via `POST /v2/user_inputs`; the tool auto-sets `parameters.path_id`
+
+### `AiAgentPayload`
+
+```json
+{
+  "name": "Sales Assistant Node",
+  "contentable_id": "0b8c2c8e-1f4a-4f1d-9c2a-2b6c0d3e4f5a",
+  "content_type_version": 1,
+  "channel_integration_id": 123,
+  "previous_bot_response_id": 456
+}
+```
+
+Use this shape as the `ai_agent` argument for `create_ai_agent_response`.
+
+Important:
+- `name` (unique), `contentable_id` (the agent UUID from `list_ai_agents`), and `content_type_version` are required
+- `channel_integration_id` is injected from path metadata when omitted
+- supply exactly one of `previous_bot_response_id` / `previous_user_input_id` (a `parent` object `{ type, id }` is also accepted)
+- the agent must pre-exist; `contentable_type` is fixed to `ai_agent` server-side
+- the write targets v2 (`POST /v2/bot_responses`); the node is resolved by name diff since the endpoint returns no id
+
+### `BranchConditionPayload`
+
+```json
+{
+  "name": "Order status router",
+  "channel_integration_id": 123,
+  "previous_bot_response_id": 456,
+  "api": {
+    "enabled": true,
+    "connection_id": 20,
+    "path": "/orders/status",
+    "method": "GET",
+    "success_key": "status",
+    "success_value": "ok",
+    "response_conditions": [
+      {
+        "sequence": 1,
+        "next_intent_type": "TEXT",
+        "is_default": false,
+        "criterias": [
+          {
+            "key": "status",
+            "operator": "equals",
+            "value": "shipped",
+            "sequence": 1,
+            "condition_operator": "and"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Use this shape as the `branch` argument for `create_branch_condition`.
+
+Important:
+- this is the CONDITION branch (content type `branch`), DISTINCT from `add_branch` (a conversational user-input menu branch)
+- `name` (unique) is required; `channel_integration_id` is injected when omitted
+- supply exactly one of `previous_bot_response_id` / `previous_user_input_id` (a `parent` object `{ type, id }` is also accepted)
+- optional `id` re-creates an existing intent as a branch, destroying its children
+- in the `api` block, `enabled` is required; when `enabled=true`, `connection_id`, `path`, and `method` (one of `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`COPY`/`HEAD`/`OPTIONS`) are required
+- each `response_conditions[]` needs `sequence` (int) and `next_intent_type` (`TEXT`/`BUTTON`/`LIST`/`AI_ASSIST`, required on create); the backend auto-creates each condition's downstream node
+- each `criterias[]` needs `key`, `operator`, and `sequence` (int); `value` and `condition_operator` are optional
+- the write targets v1 (`POST /v1/bot_responses/branches`); the node is resolved by name diff
+
+### `BranchConditionUpdatePayload`
+
+```json
+{
+  "name": "Order status router",
+  "channel_integration_id": 123,
+  "api": {
+    "enabled": true,
+    "connection_id": 20,
+    "path": "/orders/status",
+    "method": "GET",
+    "response_conditions": [
+      {
+        "id": 5001,
+        "action_status": "update",
+        "sequence": 1,
+        "is_default": false,
+        "criterias": [
+          {
+            "id": 6001,
+            "action_status": "update",
+            "key": "status",
+            "operator": "equals",
+            "value": "delivered",
+            "sequence": 1
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Use this shape as the `changes` argument for `update_branch_condition`.
+
+Important:
+- `name` is required; `channel_integration_id` is injected when omitted
+- the `api` / `response_conditions` / `criterias` structure matches `create_branch_condition`, EXCEPT `response_conditions[]` and `criterias[]` may additionally carry `id` and `action_status` (`create` / `update` / `delete`) for diff-style edits of existing rows
+- `next_intent_type` is not enforced on update
+- the write targets v1 (`PATCH /v1/bot_responses/branches/{bot_response_id}`)
+
 ## Starter Requests
 
 ### Create a path only
@@ -412,6 +576,201 @@ Notes:
   }
 }
 ```
+
+### Create an ai_assist child reply
+
+```json
+{
+  "path_id": 123,
+  "parent": {
+    "type": "user_input",
+    "id": 789
+  },
+  "bot_response": {
+    "name": "Knowledge Reply",
+    "content": {
+      "content_text": "Let me look that up for you",
+      "content_type_code": "ai_assist",
+      "channel_integration_id": 123,
+      "is_send_message": true
+    },
+    "ai_api_knowledge": {
+      "enabled": true,
+      "sources": [
+        {
+          "id": 1,
+          "api_connection_id": 20
+        }
+      ]
+    },
+    "knowledge_sources": [
+      {
+        "id": 1
+      }
+    ]
+  }
+}
+```
+
+Notes:
+- `ai_api_knowledge` and `knowledge_sources` sit at the top level of `bot_response` (siblings of `content`/`components`) for child create
+- for the seeded root node, move both families inside `components` and use `create_root_reply`
+
+### Create an exit condition
+
+```json
+{
+  "path_id": 123,
+  "parent_bot_response_id": 456,
+  "is_default": false,
+  "exit_condition": {
+    "name": "Escalate to agent",
+    "next_intent_type": "AI_AGENT",
+    "ai_agent_id": "0b8c2c8e-1f4a-4f1d-9c2a-2b6c0d3e4f5a"
+  }
+}
+```
+
+Notes:
+- `next_intent_type` is auto-uppercased; `ai_agent_id` is required only for `AI_AGENT`
+- the tool sets `parameters.path_id` itself; do not pass it inside `exit_condition`
+
+### Create an ai_agent response node
+
+```json
+{
+  "path_id": 123,
+  "ai_agent": {
+    "name": "Sales Assistant Node",
+    "contentable_id": "0b8c2c8e-1f4a-4f1d-9c2a-2b6c0d3e4f5a",
+    "content_type_version": 1,
+    "channel_integration_id": 123,
+    "previous_bot_response_id": 456
+  }
+}
+```
+
+Notes:
+- resolve `contentable_id` with `list_ai_agents` first; the agent must already exist
+- pass exactly one of `previous_bot_response_id` / `previous_user_input_id`, or a `parent` object `{ type, id }`
+
+### Create a condition branch
+
+```json
+{
+  "path_id": 123,
+  "branch": {
+    "name": "Order status router",
+    "channel_integration_id": 123,
+    "previous_bot_response_id": 456,
+    "api": {
+      "enabled": true,
+      "connection_id": 20,
+      "path": "/orders/status",
+      "method": "GET",
+      "response_conditions": [
+        {
+          "sequence": 1,
+          "next_intent_type": "TEXT",
+          "is_default": false,
+          "criterias": [
+            {
+              "key": "status",
+              "operator": "equals",
+              "value": "shipped",
+              "sequence": 1
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+Notes:
+- this is the CONDITION branch, DISTINCT from `add_branch` (a conversational menu branch)
+- when `api.enabled=true`, `connection_id`, `path`, and `method` are required; each condition needs `sequence` and (on create) `next_intent_type`
+
+### Update a condition branch
+
+```json
+{
+  "path_id": 123,
+  "bot_response_id": 456,
+  "changes": {
+    "name": "Order status router",
+    "channel_integration_id": 123,
+    "api": {
+      "enabled": true,
+      "connection_id": 20,
+      "path": "/orders/status",
+      "method": "GET",
+      "response_conditions": [
+        {
+          "id": 5001,
+          "action_status": "update",
+          "sequence": 1,
+          "criterias": [
+            {
+              "id": 6001,
+              "action_status": "update",
+              "key": "status",
+              "operator": "equals",
+              "value": "delivered",
+              "sequence": 1
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+Notes:
+- conditions and criterias may carry `id` + `action_status` (`create`/`update`/`delete`) for diff-style edits
+- `next_intent_type` is not enforced on update
+
+### Configure a voice reply (conversation closure + audio attachment)
+
+```json
+{
+  "path_id": 123,
+  "bot_response_id": 456,
+  "transport": "auto",
+  "bot_response": {
+    "name": "Voice Reply",
+    "content": {
+      "content_text": "Thanks for calling",
+      "content_type_code": "text",
+      "channel_integration_id": 123,
+      "is_send_message": true
+    },
+    "conversation_closure": {
+      "enabled": true,
+      "action_type": "resolve",
+      "resolve": {
+        "text_message": "Conversation closed"
+      }
+    },
+    "attachments": [
+      {
+        "name": "greeting.mp3",
+        "type": "audio",
+        "upload": {
+          "file_path": "/absolute/path/to/greeting.mp3"
+        }
+      }
+    ]
+  }
+}
+```
+
+Notes:
+- voice is not a separate node type; configure it on a bot response via `update_bot_response` (auto-routes to v3 for `conversation_closure` and file-backed attachments)
+- the FE `action` / call-group field (assign_to_call_group / end_the_call) has no backend counterpart and is omitted
+- `bot_type="voice"` remains a path-level setting, not part of this node payload
 
 ## Payload Constraints
 
