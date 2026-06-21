@@ -60,13 +60,21 @@ The FE conversation builder offers these response/content types: text, button, l
 
 What the MCP CAN build:
 - text: the `content_text` content type on any bot response (root or child).
-- button: a top-level `interactive.button` payload on a bot response.
-- list: a top-level `interactive.list` payload on a bot response.
-- media (image, document, video): sent as a `text` node carrying a top-level `attachments[]` array. Media is not a separate content type; it rides on a text node.
-- whatsapp_flow: dedicated `create_whatsapp_flow` and `update_whatsapp_flow` tools.
+- button: a top-level `interactive.button` payload on a bot response. This now works on CHILD create via `create_bot_response`, not just on update.
+- list: a top-level `interactive.list` payload on a bot response. This now works on CHILD create via `create_bot_response`, not just on update.
+- media (image, document, video): sent as a `text` node carrying a top-level `attachments[]` array. Media is not a separate content type; it rides on a text node. Attachments now ride along on CHILD create too.
+- CRM deal: a top-level `crm_deal` block, carried on CHILD create now and editable later with `update_crm_deal`.
+- tag: a top-level `tag` list, carried on CHILD create now.
+- reuse: pass `bot_response: { "id": <int>, "is_reuse": true }` on `create_bot_response` to LINK an existing bot response instead of authoring new content.
+- whatsapp_flow: dedicated `create_whatsapp_flow` and `update_whatsapp_flow` tools. `next_intent_type` accepts `TEXT`/`BUTTON`/`LIST`/`AI_ASSIST`/`BRANCH`; it does NOT support `VOICE` (the backend rejects it).
+- fallback: dedicated `create_fallback` (default fallback reply, `intent_type` `FALLBACK` or `AI_ASSIST`) and `update_fallback` tools.
+- path-level knowledge: `create_path_knowledge_sources` binds knowledge at the path level (distinct from node-level ai_assist `knowledge_sources`).
+- organization entity: `create_organization_entity` mints the id used as `organization_entity_id`.
+- NLP training: `train_utterances` (persist keyword utterances; texts must be unique) and `generate_trigger_texts` (GPT-generate candidate texts).
 - ai_assist: a real content type on any bot response. Pass `content.content_type_code="ai_assist"` plus the top-level `ai_api_knowledge` and/or `knowledge_sources` (siblings of `content`/`components`) to `create_bot_response` for a child node, or nest those families inside `components` for `create_root_reply`. The knowledge families are forwarded to the backend ai_assist branch, so the node is created with its knowledge wired.
-- ai_agent: `create_ai_agent_response` (POST /v2/bot_responses with `contentable_type="ai_agent"`). The agent must already exist; resolve its `contentable_id` with `list_ai_agents` first, and pass the agent's `content_type_version`.
-- branch/condition: `create_branch_condition` and `update_branch_condition` (POST/PATCH /v1/bot_responses/branches). These build the condition-branch node whose `api.response_conditions[].criterias[]` route to a downstream node per condition. This is DISTINCT from `add_branch`, which adds a conversational user-input tree branch.
+- ai_agent: `create_ai_agent_response` (POST /v2/bot_responses with `contentable_type="ai_agent"`) to create, and `update_ai_agent_response` (PATCH /v3/bot-responses/{id}) to edit. The agent must already exist; resolve its `contentable_id` with `list_ai_agents` first, and pass the agent's `content_type_version`.
+- branch/condition: `create_branch_condition` and `update_branch_condition`. The legacy v1 `api.response_conditions[].criterias[]` shape (API-driven routing, POST/PATCH /v1/bot_responses/branches) still works. A top-level `conditions[]` array now adds SCHEDULE, CHANNEL, and CUSTOMER_FIELD branch types (auto-routing to the v2 branches endpoint). This is DISTINCT from `add_branch`, which adds a conversational user-input tree branch.
+- standalone user input: `create_user_input` adds a user input with no child reply (and supports OCR/multitype via `response_type` + `ai_knowledge_source_ocr_*`). `add_branch` remains the way to create a user input plus its child reply in one call.
 - exit-condition: `create_exit_condition` (a user input with `response_type="exit_condition"`). `next_intent_type` (TEXT/BUTTON/LIST/BRANCH/AI_AGENT/WHATSAPP_FLOW) auto-creates the downstream intent.
 - voice: not a separate node type. Configure it on a bot response with `update_bot_response` (it auto-routes to v3) by setting `conversation_closure` plus an audio `attachments[]` entry. `bot_type="voice"` remains a path-level setting.
 - intra-node ordering: the `sequence` field orders elements WITHIN a node — button actions, list items, and branch response-conditions/criterias. This is already supported on the relevant create/update payloads.
@@ -106,8 +114,8 @@ Do not use this skill for:
 2. Prefer `workflow_create_path_with_reply`, `workflow_add_branch_with_reply`, and `workflow_change_node_component` for common multi-step tasks.
 3. Treat the current frontend behavior as the primary behavioral contract for conversation editing.
 4. Use `create_root_reply` only for the seeded root node that already exists after path creation.
-5. Use `create_bot_response` only for non-root child creation. It can carry a top-level `interactive` payload: a brand-new interactive is created inline through the v1 create path.
-6. Use `update_bot_response` and `create_root_reply` to update interactive that already exists, matched by id, and for other advanced component edits such as attachments, CRM, knowledge sources, API actions, and conversation closure.
+5. Use `create_bot_response` only for non-root child creation. It now carries top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id` on child create (a brand-new interactive is created inline through the v1 create path). To REUSE an existing bot response instead of authoring content, pass `bot_response: { "id": <int>, "is_reuse": true }`.
+6. Use `update_bot_response` and `create_root_reply` to update interactive that already exists, matched by id, and for other advanced component edits such as knowledge sources, API actions, and conversation closure. Conversation closure and file-backed multipart attachments still require an update (not child create).
 7. Inspect both `warnings` and `meta` on every response. They tell you which API and tree version were actually used.
 8. Prefer safe delete defaults unless the user explicitly asks for broader deletion.
 9. For Hub operations, prefer the documented default params and ordering in this skill bundle instead of inventing new query shapes.
@@ -144,8 +152,8 @@ Do not use this skill for:
 
 - Read tools: `list_paths`, `get_path_detail`, `get_path_tree`, `get_node_detail`, `list_chatbot_channel_integrations`, `list_content_types`
 - Workflow tools: `workflow_create_path_with_reply`, `workflow_add_branch_with_reply`, `workflow_change_node_component`
-- Direct mutation tools: `create_path`, `update_path_metadata`, `create_root_reply`, `create_bot_response`, `add_branch`, `create_branch_condition`, `update_branch_condition`, `create_exit_condition`, `create_ai_agent_response`, `update_bot_response`, `create_whatsapp_flow`, `update_whatsapp_flow`, `update_user_input`, `set_default_user_input`, `delete_user_input`, `delete_bot_response`, `publish_path`, `discard_path_draft`
-- AI agent lookup: `list_ai_agents` (resolve `contentable_id` before `create_ai_agent_response`)
+- Direct mutation tools: `create_path`, `update_path_metadata`, `create_root_reply`, `create_bot_response`, `add_branch`, `create_user_input`, `create_fallback`, `update_fallback`, `create_branch_condition`, `update_branch_condition`, `create_exit_condition`, `create_ai_agent_response`, `update_ai_agent_response`, `update_bot_response`, `update_crm_deal`, `create_whatsapp_flow`, `update_whatsapp_flow`, `update_user_input`, `set_default_user_input`, `create_path_knowledge_sources`, `create_organization_entity`, `train_utterances`, `generate_trigger_texts`, `delete_user_input`, `delete_bot_response`, `publish_path`, `discard_path_draft`
+- AI agent lookup: `list_ai_agents` (resolve `contentable_id` before `create_ai_agent_response` / `update_ai_agent_response`)
 - Hub tools: `get_hub_user_profile`, `list_hub_users`, `get_hub_organization_me`, `list_hub_integrations`, `normalize_hub_integrations_to_path_channels`, `list_hub_divisions`, `list_hub_tags`, `upload_hub_message_file`, `get_hub_qontak_integration_uniq`, `get_hub_billing_info`, `get_hub_client_config`
 
 ### 3. Prepare normalized payloads
@@ -231,6 +239,8 @@ Use these rules without exception unless the user explicitly wants a lower-level
 - use `update_bot_response` or `workflow_change_node_component` for advanced edits on an existing bot response
 - advanced edits include interactive buttons, interactive lists, attachments, CRM payloads, API actions, knowledge sources, AI API knowledge, assignment, idle rules, auto resolve, and conversation closure
 - a brand-new interactive is created inline through `create_bot_response`; `update_bot_response` and `create_root_reply` update interactive that already exists, matched by id
+- child create now also carries top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id`, plus a `bot_response: { id, is_reuse: true }` reuse form; only conversation closure and file-backed multipart attachments still require an update step
+- use `update_crm_deal` to edit an existing CRM deal block (by `crm_deal_id`), and `update_fallback` to edit a fallback (always include `assignment`)
 - if a payload is too advanced for child-create, create the child first and then update it
 
 ### Transport selection
@@ -348,13 +358,21 @@ Start with this decision tree:
 12. Need an ai_assist reply (knowledge-backed)?
    Use `create_bot_response` with `content.content_type_code="ai_assist"` plus top-level `ai_api_knowledge` / `knowledge_sources` (or `create_root_reply` with those nested in `components`).
 13. Need an ai_agent reply node?
-   Resolve the agent with `list_ai_agents`, then `create_ai_agent_response` with `contentable_id` and `content_type_version`.
+   Resolve the agent with `list_ai_agents`, then `create_ai_agent_response` with `contentable_id` and `content_type_version`. To edit an existing ai_agent node, use `update_ai_agent_response` (PATCH /v3/bot-responses/{id}).
 14. Need a condition branch (route by API/criteria, not a user menu choice)?
-   Use `create_branch_condition` / `update_branch_condition`. For a conversational user-input menu branch, use `add_branch` / `workflow_add_branch_with_reply` instead.
+   Use `create_branch_condition` / `update_branch_condition`. The legacy v1 `api.response_conditions` shape covers API routing; a top-level `conditions[]` adds SCHEDULE / CHANNEL / CUSTOMER_FIELD branches (auto-routes to v2). For a conversational user-input menu branch, use `add_branch` / `workflow_add_branch_with_reply` instead.
 15. Need an exit-condition node?
-   Use `create_exit_condition` with an `exit_condition` carrying `next_intent_type`.
+   Use `create_exit_condition` with an `exit_condition` carrying `next_intent_type`. To UPDATE an existing exit condition's routing, use `update_user_input` with `response_type` + `parameters`.
 16. Need a voice reply?
    Use `update_bot_response` on a bot response with `conversation_closure` + an audio `attachments[]` entry (auto-routes to v3). There is no separate voice node and no `action`/call-group field.
+17. Need a standalone user input (no child reply) or an OCR/multitype input?
+   Use `create_user_input` (`response_type` + `ai_knowledge_source_ocr_*` for OCR). Attach a reply later with `create_bot_response`.
+18. Need a default fallback reply?
+   Use `create_fallback` (`intent_type` `FALLBACK` or `AI_ASSIST`) to create, `update_fallback` to edit (always include `assignment`).
+19. Need to edit a CRM deal on an existing node?
+   Use `update_crm_deal` with the `crm_deal_id` and an `api_body` of deal fields. To attach CRM at creation, pass `crm_deal` on `create_bot_response`.
+20. Need path-level knowledge, an organization entity id, or NLP keyword training?
+   Use `create_path_knowledge_sources` (path-level knowledge), `create_organization_entity` (mint an `organization_entity_id`), `train_utterances` (persist unique utterances), or `generate_trigger_texts` (GPT-generate candidates).
 
 ## Tool Strategy
 
@@ -397,16 +415,25 @@ Use these when the workflow wrapper is too broad or the task is explicitly low-l
 - `create_root_reply`
 - `create_bot_response`
 - `add_branch`
+- `create_user_input`
+- `create_fallback`
+- `update_fallback`
 - `create_branch_condition`
 - `update_branch_condition`
 - `create_exit_condition`
 - `list_ai_agents`
 - `create_ai_agent_response`
+- `update_ai_agent_response`
 - `update_bot_response`
+- `update_crm_deal`
 - `create_whatsapp_flow`
 - `update_whatsapp_flow`
 - `update_user_input`
 - `set_default_user_input`
+- `create_path_knowledge_sources`
+- `create_organization_entity`
+- `train_utterances`
+- `generate_trigger_texts`
 - `delete_user_input`
 - `delete_bot_response`
 - `publish_path`

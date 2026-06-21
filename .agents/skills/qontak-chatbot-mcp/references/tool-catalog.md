@@ -166,7 +166,17 @@ Inputs:
 Notes:
 - stays on the FE child-create flow
 - intended for text-content child creation plus the JSON-safe component groups validated for child create
-- for interactive, attachment, CRM, knowledge, or conversation-closure edits, update an existing node instead
+- for conversation-closure edits, update an existing node instead
+
+Top-level advanced families now carried on CHILD create (previously dropped):
+- `interactive`: a brand-new interactive `button` or `list` is created inline through the v1 create path
+- `attachments`: media (image, document, video) rides on a `text` node via a top-level `attachments[]` array
+- `crm_deal`: a CRM deal block can be attached at child create time
+- `tag`: tag list applied at child create time
+- `is_purchase_event`: boolean purchase-event flag
+- `organization_entity_id`: entity reference
+- `bot_response`: pass `{ "id": <int>, "is_reuse": true }` to REUSE an existing bot response instead of creating new content (the child links to the reused response)
+- these are TOP-LEVEL siblings of `content`/`components`; only conversation-closure and file-backed multipart edits still require `update_bot_response`
 
 ai_assist support:
 - this tool now creates a knowledge-backed `ai_assist` reply: pass `content.content_type_code="ai_assist"` plus TOP-LEVEL `ai_api_knowledge` and/or `knowledge_sources` (siblings of `content`/`components`)
@@ -190,6 +200,51 @@ Notes:
 - partial failures keep created ids and do not auto-delete them
 - do NOT use `is_default` with `update_user_input`; use `set_default_user_input` for toggling later
 - the user_input creation may return an error like "Created user input did not include an id", but the branch may still be created (verify with re-read)
+
+### `create_user_input(path_id, parent_bot_response_id, user_input, preferred_tree_version="v3")`
+
+Use to create a standalone user input under a bot response WITHOUT creating a child reply. Use `add_branch` instead when you also want the child `bot_response` in one call.
+
+`user_input` fields:
+- `input`: the user-facing trigger text
+- `is_default`: boolean default-branch flag
+- `utterances`: list of `{ "text": "...", "organization_nlp_connector_id"?: int }`
+- `response_type`: optional; one of `text`, `image`, `all_types` (OCR / multitype intent)
+- `ai_knowledge_source_ocr_enabled`: optional bool; enables OCR knowledge matching
+- `ai_knowledge_source_ocr_id`: optional int; this is an `ai_knowledge_source_id`
+
+Notes:
+- writes to `POST /v2/user_inputs` (`meta.api_version_used = "v2"`)
+- creates the user input only (no child); attach a reply later with `create_bot_response`
+- returns `result.user_input` and `result.tree`
+
+### `create_fallback(path_id, parent_bot_response_id, fallback, preferred_tree_version="v3")`
+
+Use to create a default fallback under a bot response (the branch taken when no other input matches).
+
+`fallback` fields:
+- nested `bot_response`: `{ name, content_type_id, content_text, intent_type: "FALLBACK" | "AI_ASSIST", is_send_message?, assignment? }`
+
+Notes:
+- writes to `POST /v1/user_inputs` (`meta.api_version_used = "v1"`)
+- `intent_type` selects the fallback behavior: `FALLBACK` for a plain default reply, `AI_ASSIST` for a knowledge-backed fallback
+- returns `result.user_input` and `result.tree`
+
+### `update_fallback(path_id, bot_response_id, changes, preferred_tree_version="v3")`
+
+Use to edit an existing fallback bot response.
+
+`changes` fields:
+- `content_text`: the fallback reply text
+- `is_send_message`: boolean
+- `assignment`: `{ enabled, ... }` — REQUIRED by the backend on this call
+- `ai_assist`: optional
+- `channel_integration_id`: injected by the tool
+
+Notes:
+- writes to `PATCH /v1/bot_responses/{bot_response_id}/fallback` (`meta.api_version_used = "v1"`)
+- the backend rejects the update if `assignment` is missing; always include it (at minimum `{ "enabled": false }`)
+- returns `result.bot_response` and `result.tree`
 
 ### `create_exit_condition(path_id, parent_bot_response_id, exit_condition, is_default=False, preferred_tree_version="v3")`
 
@@ -225,6 +280,22 @@ Notes:
 - the endpoint returns no id, so the tool resolves the new node by diffing the tree and matching the unique `name`
 - returns `result.bot_response` and `result.tree`
 
+### `update_ai_agent_response(path_id, bot_response_id, changes, preferred_tree_version="v3")`
+
+Use to edit an existing `ai_agent` bot response node. Complements `create_ai_agent_response`.
+
+`changes` fields:
+- `name`: the node name
+- `contentable_id`: the agent UUID (resolved from `list_ai_agents`)
+- `content_type_version`: the agent content type version
+- `path_id`: optional
+- `parameters`: optional
+
+Notes:
+- writes to `PATCH /v3/bot-responses/{bot_response_id}` (`meta.api_version_used = "v3"`)
+- `contentable_type` is fixed to `ai_agent` server-side
+- returns `result.bot_response` and `result.tree`
+
 ### `create_branch_condition(path_id, branch, parent=None, preferred_tree_version="v3")`
 
 Use to create the CONDITION branch node (content type `branch`), whose API-driven `response_conditions` route to one downstream node per matched condition.
@@ -257,8 +328,17 @@ Distinction:
 - `value`: optional
 - `condition_operator`: optional
 
+Typed `conditions[]` (NEW; SCHEDULE / CHANNEL / CUSTOMER_FIELD branches):
+- in addition to the legacy `api.response_conditions` shape, you may pass a TOP-LEVEL `conditions[]` array on `branch`
+- each entry has a `branch_type` plus a typed sub-object; supplying `conditions[]` auto-routes the write to the v2 branches endpoint
+- `branch_type="API"`: `api { key, value }`
+- `branch_type="SCHEDULE"`: `schedules[] { day_number, start_hour, end_hour, is_24h, cross_midnight, sequence, condition_operator }`
+- `branch_type="CHANNEL"`: `channel { channel_id, channel_name, channel_type, operator, sequence }`
+- `branch_type="CUSTOMER_FIELD"`: `parameters {}` carrying the field key with a scalar `value`, or `{ min, max }` when the operator is `is_between`
+- the legacy v1 `api.response_conditions` shape still works unchanged for API-only routing
+
 Notes:
-- writes to `POST /v1/bot_responses/branches` (`meta.api_version_used = "v1"`)
+- writes to `POST /v1/bot_responses/branches` for the legacy v1 shape (`meta.api_version_used = "v1"`); a top-level `conditions[]` auto-routes to the v2 branches endpoint (`meta.api_version_used = "v2"`)
 - the backend auto-creates each condition's downstream node
 - the endpoint returns no id, so the node is resolved by name diff
 - returns `result.bot_response` and `result.tree`
@@ -276,8 +356,13 @@ Differences from create:
 - `next_intent_type` is not enforced on update
 - `response_conditions[]` and `criterias[]` may additionally carry `id` and `action_status` (`create` / `update` / `delete`) for diff-style edits of existing rows
 
+Typed `conditions[]` (NEW; same as create):
+- a top-level `conditions[]` array supports SCHEDULE / CHANNEL / CUSTOMER_FIELD branches with the same `branch_type` + typed sub-object shape documented under `create_branch_condition`
+- supplying `conditions[]` auto-routes the update to the v2 branches endpoint
+- the legacy v1 `api.response_conditions` shape still works unchanged
+
 Notes:
-- writes to `PATCH /v1/bot_responses/branches/{bot_response_id}` (`meta.api_version_used = "v1"`)
+- writes to `PATCH /v1/bot_responses/branches/{bot_response_id}` for the legacy v1 shape (`meta.api_version_used = "v1"`); a top-level `conditions[]` auto-routes to the v2 branches endpoint (`meta.api_version_used = "v2"`)
 - returns `result.bot_response` and `result.tree`
 
 ### `update_bot_response(path_id, bot_response_id, bot_response, transport="auto", preferred_tree_version="v3")`
@@ -303,6 +388,10 @@ Accepted `changes` fields (validates with extra=forbid, so anything else is reje
 - `organization_entity_id`: integer
 - `utterances`: list of `{ "text": "...", "organization_nlp_connector_id"?: int }`
 - `organization_nlp_connector_id`: integer
+- `response_type`: string; carried through so exit-condition / multitype inputs can be retyped
+- `parameters`: object; carried through so exit-condition `parameters` (downstream routing) can be UPDATED
+- `ai_knowledge_source_ocr_enabled`: bool; OCR update
+- `ai_knowledge_source_ocr_id`: int (an `ai_knowledge_source_id`); OCR update
 
 Example `changes`:
 - `{ "input": "Check status", "utterances": [ { "text": "where is my order" } ] }`
@@ -310,10 +399,25 @@ Example `changes`:
 Important:
 - `is_default`, `channel_integration_id`, and `bot_response_id` are NOT accepted here and will be rejected
 - default toggling belongs to `set_default_user_input`
+- `response_type` + `parameters` let you UPDATE an existing exit condition's downstream routing in place (previously only creatable)
 
 ### `set_default_user_input(path_id, user_input_id, is_default=true, preferred_tree_version="v3")`
 
 Use to toggle the default branch state for one user input.
+
+### `update_crm_deal(path_id, bot_response_id, crm_deal_id, changes, preferred_tree_version="v3")`
+
+Use to edit an existing CRM deal block attached to a bot response.
+
+`changes` fields:
+- `enabled`: boolean
+- `is_contact_association`: boolean
+- `api_body`: the deal fields — `{ name, crm_pipeline_id | crm_pipeline_name, crm_stage_id | crm_stage_name, creator_id | creator_name (the deal owner), crm_source_id | crm_source_name }`
+
+Notes:
+- writes to `PATCH /v1/bot_responses/{bot_response_id}/crm_deals/{crm_deal_id}` (`meta.api_version_used = "v1"`)
+- `creator_id` / `creator_name` identifies the deal owner
+- returns `result.bot_response` and `result.tree`
 
 ### `delete_user_input(path_id, user_input_id, mode="single_block", preferred_tree_version="v3")`
 
@@ -350,6 +454,7 @@ Notes:
 - writes to v1 `POST /v1/bot_responses/whatsapp_flow` (`meta.api_version_used = "v1"`)
 - read-back is verified via the v3 tree
 - `whatsapp_flow` nested object required fields: `template_id`, `external_id`, `template_name`, `message_content`, `button_text` (<= 60 chars), `next_intent_type` in `{TEXT, BUTTON, LIST, AI_ASSIST, BRANCH}`
+- `next_intent_type` does NOT support `VOICE`; the backend rejects it. Valid values are only `TEXT`, `BUTTON`, `LIST`, `AI_ASSIST`, `BRANCH`
 - `whatsapp_flow.header_text` is optional
 - parent-level fields: `name`; `channel_integration_id` (injected from the path when omitted); and exactly one of `previous_bot_response_id` / `previous_user_input_id`
 - alternatively pass `parent` as `{type, id}` to express the parent linkage
@@ -362,6 +467,55 @@ Notes:
 - writes to v1 `PATCH /v1/bot_responses/whatsapp_flow/{id}` (`meta.api_version_used = "v1"`)
 - read-back is verified via the v3 tree
 - `changes` accepts the same nested `whatsapp_flow` fields as create, all optional
+
+## Knowledge, Entity, and NLP Tools
+
+### `create_path_knowledge_sources(path_id, knowledge_sources)`
+
+Use to attach PATH-LEVEL knowledge sources to a conversation (distinct from the node-level `knowledge_sources` carried on an ai_assist bot response).
+
+Inputs:
+- `knowledge_sources`: a list of `{ "id": <int> }` items
+
+Notes:
+- writes to `POST /v1/paths/{path_id}/knowledge-sources` (`meta.api_version_used = "v1"`)
+- this binds knowledge at the path level; node-level ai_assist knowledge still uses the `knowledge_sources` family on `create_bot_response` / `create_root_reply`
+
+### `create_organization_entity(code)`
+
+Use to create an organization entity and obtain its id for use as `organization_entity_id` on user inputs / bot responses.
+
+Inputs:
+- `code`: the entity code string
+
+Notes:
+- writes to `POST /v1/organization_entities` (`meta.api_version_used = "v1"`)
+- returns the new entity id; use it as `organization_entity_id` elsewhere
+
+### `train_utterances(intent_id, texts, nlp_integration_id)`
+
+Use to train NLP keyword utterances for an intent.
+
+Inputs:
+- `intent_id`: the intent to train
+- `texts`: list of utterance strings; each text must be UNIQUE
+- `nlp_integration_id`: the NLP integration to train against
+
+Notes:
+- writes to `POST /v1/utterances` (`meta.api_version_used = "v1"`)
+- duplicate texts are rejected; de-duplicate before sending
+
+### `generate_trigger_texts(sample_texts, total_texts=None)`
+
+Use to generate candidate trigger / utterance texts from a few sample seeds (GPT-backed).
+
+Inputs:
+- `sample_texts`: list of seed strings
+- `total_texts`: optional count of texts to generate
+
+Notes:
+- writes to `POST /v2/gpt/trigger-texts` (`meta.api_version_used = "v2"`)
+- returns the generated candidate texts; pair with `train_utterances` to persist the useful ones
 
 ## Workflow Tools
 

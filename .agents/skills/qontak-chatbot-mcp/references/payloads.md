@@ -173,7 +173,19 @@ Important:
     },
     "list": null
   },
+  "crm_deal": {
+    "enabled": true,
+    "is_contact_association": true,
+    "api_body": {
+      "name": "New inbound deal",
+      "crm_pipeline_id": "pipe-1",
+      "crm_stage_id": "stage-1",
+      "creator_id": "user-9",
+      "crm_source_id": "src-1"
+    }
+  },
   "tag": ["support"],
+  "is_purchase_event": false,
   "content_type_version": "2.1",
   "organization_entity_id": 99
 }
@@ -181,6 +193,8 @@ Important:
 
 Note:
 - `content_type_version` should be treated as an opaque value and passed through as provided
+- on CHILD create (`create_bot_response`) the top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id` families are now carried through (previously dropped); a brand-new interactive is created inline via the v1 create path
+- to REUSE an existing bot response instead of authoring content, send `"bot_response": { "id": <int>, "is_reuse": true }` on `create_bot_response` rather than a `content` block
 
 Interactive validation (enforced, matches the chatbot dry-schema):
 - supply exactly one of `interactive.button` or `interactive.list`
@@ -384,6 +398,190 @@ Important:
 - the `api` / `response_conditions` / `criterias` structure matches `create_branch_condition`, EXCEPT `response_conditions[]` and `criterias[]` may additionally carry `id` and `action_status` (`create` / `update` / `delete`) for diff-style edits of existing rows
 - `next_intent_type` is not enforced on update
 - the write targets v1 (`PATCH /v1/bot_responses/branches/{bot_response_id}`)
+
+### `UserInputPayload` (OCR / multitype)
+
+```json
+{
+  "input": "Upload your receipt",
+  "is_default": false,
+  "response_type": "image",
+  "ai_knowledge_source_ocr_enabled": true,
+  "ai_knowledge_source_ocr_id": 42,
+  "utterances": [
+    { "text": "here is my receipt" }
+  ]
+}
+```
+
+Use this shape as the `user_input` argument for `create_user_input`.
+
+Important:
+- `response_type` is one of `text`, `image`, `all_types`; OCR / multitype matching uses `image` or `all_types`
+- `ai_knowledge_source_ocr_id` is an `ai_knowledge_source_id` (not a node id)
+- creates the user input only (no child reply) via `POST /v2/user_inputs`; attach a reply later with `create_bot_response`
+
+### `FallbackPayload`
+
+```json
+{
+  "bot_response": {
+    "name": "Default Fallback",
+    "content_type_id": 1,
+    "content_text": "Sorry, I did not understand that.",
+    "intent_type": "FALLBACK",
+    "is_send_message": true,
+    "assignment": {
+      "enabled": false
+    }
+  }
+}
+```
+
+Use this shape as the `fallback` argument for `create_fallback`.
+
+Important:
+- `intent_type` is `FALLBACK` for a plain default reply or `AI_ASSIST` for a knowledge-backed fallback
+- the write targets v1 (`POST /v1/user_inputs`)
+
+### `FallbackUpdatePayload`
+
+```json
+{
+  "content_text": "Sorry, I still did not understand. Let me connect you to an agent.",
+  "is_send_message": true,
+  "assignment": {
+    "enabled": true,
+    "is_auto": true,
+    "division": {
+      "channel_division_id": "division-1"
+    }
+  }
+}
+```
+
+Use this shape as the `changes` argument for `update_fallback`.
+
+Important:
+- `assignment` is REQUIRED by the backend; include at least `{ "enabled": false }`
+- `channel_integration_id` is injected by the tool
+- the write targets v1 (`PATCH /v1/bot_responses/{bot_response_id}/fallback`)
+
+### `AiAgentUpdatePayload`
+
+```json
+{
+  "name": "Sales Assistant Node",
+  "contentable_id": "0b8c2c8e-1f4a-4f1d-9c2a-2b6c0d3e4f5a",
+  "content_type_version": 1
+}
+```
+
+Use this shape as the `changes` argument for `update_ai_agent_response`.
+
+Important:
+- `contentable_type` is fixed to `ai_agent` server-side; `path_id` and `parameters` are optional
+- the write targets v3 (`PATCH /v3/bot-responses/{bot_response_id}`)
+
+### `BranchConditionPayload` (typed `conditions[]`, v2)
+
+A top-level `conditions[]` array adds SCHEDULE / CHANNEL / CUSTOMER_FIELD branch types and auto-routes the write to the v2 branches endpoint.
+
+CUSTOMER_FIELD with `is_between`:
+
+```json
+{
+  "name": "Age range router",
+  "channel_integration_id": 123,
+  "previous_bot_response_id": 456,
+  "conditions": [
+    {
+      "branch_type": "CUSTOMER_FIELD",
+      "sequence": 1,
+      "next_intent_type": "TEXT",
+      "parameters": {
+        "key": "age",
+        "operator": "is_between",
+        "value": { "min": 18, "max": 30 }
+      }
+    }
+  ]
+}
+```
+
+SCHEDULE branch:
+
+```json
+{
+  "name": "Office hours router",
+  "channel_integration_id": 123,
+  "previous_bot_response_id": 456,
+  "conditions": [
+    {
+      "branch_type": "SCHEDULE",
+      "sequence": 1,
+      "next_intent_type": "TEXT",
+      "schedules": [
+        {
+          "day_number": 1,
+          "start_hour": "09:00:00",
+          "end_hour": "17:00:00",
+          "is_24h": false,
+          "cross_midnight": false,
+          "sequence": 1,
+          "condition_operator": "and"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Use these shapes as the `branch` argument for `create_branch_condition` (or `changes` for `update_branch_condition`).
+
+Important:
+- each entry carries a `branch_type` plus its typed sub-object: `api { key, value }`, `schedules[]`, `channel { channel_id, channel_name, channel_type, operator, sequence }`, or `parameters {}` for CUSTOMER_FIELD
+- CUSTOMER_FIELD `value` is a scalar for ordinary operators, or `{ min, max }` when the operator is `is_between`
+- supplying `conditions[]` auto-routes to the v2 branches endpoint (`meta.api_version_used = "v2"`); the legacy v1 `api.response_conditions` shape still works
+
+### `CrmDealUpdatePayload`
+
+```json
+{
+  "enabled": true,
+  "is_contact_association": true,
+  "api_body": {
+    "name": "New inbound deal",
+    "crm_pipeline_id": "pipe-1",
+    "crm_stage_id": "stage-1",
+    "creator_id": "user-9",
+    "crm_source_id": "src-1"
+  }
+}
+```
+
+Use this shape as the `changes` argument for `update_crm_deal`.
+
+Important:
+- pass `crm_deal_id` (the existing deal block id) as a separate tool argument
+- `creator_id` / `creator_name` identifies the deal owner; `*_id` and `*_name` variants are interchangeable per field
+- the write targets v1 (`PATCH /v1/bot_responses/{bot_response_id}/crm_deals/{crm_deal_id}`)
+
+### `PathKnowledgeSourcesPayload`
+
+```json
+{
+  "knowledge_sources": [
+    { "id": 1 },
+    { "id": 2 }
+  ]
+}
+```
+
+Use this as the `knowledge_sources` argument for `create_path_knowledge_sources`.
+
+Important:
+- this binds knowledge at the PATH level (`POST /v1/paths/{path_id}/knowledge-sources`), distinct from node-level ai_assist `knowledge_sources`
 
 ## Starter Requests
 
@@ -771,6 +969,212 @@ Notes:
 - voice is not a separate node type; configure it on a bot response via `update_bot_response` (auto-routes to v3 for `conversation_closure` and file-backed attachments)
 - the FE `action` / call-group field (assign_to_call_group / end_the_call) has no backend counterpart and is omitted
 - `bot_type="voice"` remains a path-level setting, not part of this node payload
+
+### Reuse an existing bot response on child create
+
+```json
+{
+  "path_id": 123,
+  "parent": {
+    "type": "user_input",
+    "id": 789
+  },
+  "bot_response": {
+    "id": 456,
+    "is_reuse": true
+  }
+}
+```
+
+Notes:
+- the child links to the existing bot response `456` instead of authoring new content
+- omit `content` when reusing
+
+### Create a standalone user input (OCR / multitype)
+
+```json
+{
+  "path_id": 123,
+  "parent_bot_response_id": 456,
+  "user_input": {
+    "input": "Upload your receipt",
+    "is_default": false,
+    "response_type": "image",
+    "ai_knowledge_source_ocr_enabled": true,
+    "ai_knowledge_source_ocr_id": 42
+  }
+}
+```
+
+Notes:
+- creates the user input only (no child reply); attach a reply later with `create_bot_response`
+- `ai_knowledge_source_ocr_id` is an `ai_knowledge_source_id`
+
+### Create a default fallback
+
+```json
+{
+  "path_id": 123,
+  "parent_bot_response_id": 456,
+  "fallback": {
+    "bot_response": {
+      "name": "Default Fallback",
+      "content_type_id": 1,
+      "content_text": "Sorry, I did not understand that.",
+      "intent_type": "FALLBACK",
+      "is_send_message": true,
+      "assignment": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+Notes:
+- `intent_type` is `FALLBACK` or `AI_ASSIST`
+- the write targets v1 (`POST /v1/user_inputs`)
+
+### Update a fallback
+
+```json
+{
+  "path_id": 123,
+  "bot_response_id": 456,
+  "changes": {
+    "content_text": "Let me connect you to an agent.",
+    "is_send_message": true,
+    "assignment": {
+      "enabled": false
+    }
+  }
+}
+```
+
+Notes:
+- `assignment` is REQUIRED by the backend; include at least `{ "enabled": false }`
+- the write targets v1 (`PATCH /v1/bot_responses/{id}/fallback`)
+
+### Update an ai_agent response node
+
+```json
+{
+  "path_id": 123,
+  "bot_response_id": 456,
+  "changes": {
+    "name": "Sales Assistant Node",
+    "contentable_id": "0b8c2c8e-1f4a-4f1d-9c2a-2b6c0d3e4f5a",
+    "content_type_version": 1
+  }
+}
+```
+
+Notes:
+- `contentable_type` is fixed to `ai_agent` server-side
+- the write targets v3 (`PATCH /v3/bot-responses/{id}`)
+
+### Create a CUSTOMER_FIELD `is_between` condition branch (v2)
+
+```json
+{
+  "path_id": 123,
+  "branch": {
+    "name": "Age range router",
+    "channel_integration_id": 123,
+    "previous_bot_response_id": 456,
+    "conditions": [
+      {
+        "branch_type": "CUSTOMER_FIELD",
+        "sequence": 1,
+        "next_intent_type": "TEXT",
+        "parameters": {
+          "key": "age",
+          "operator": "is_between",
+          "value": { "min": 18, "max": 30 }
+        }
+      }
+    ]
+  }
+}
+```
+
+Notes:
+- a top-level `conditions[]` auto-routes to the v2 branches endpoint
+- for `is_between`, `value` is `{ min, max }`; other operators use a scalar `value`
+
+### Create a SCHEDULE condition branch (v2)
+
+```json
+{
+  "path_id": 123,
+  "branch": {
+    "name": "Office hours router",
+    "channel_integration_id": 123,
+    "previous_bot_response_id": 456,
+    "conditions": [
+      {
+        "branch_type": "SCHEDULE",
+        "sequence": 1,
+        "next_intent_type": "TEXT",
+        "schedules": [
+          {
+            "day_number": 1,
+            "start_hour": "09:00:00",
+            "end_hour": "17:00:00",
+            "is_24h": false,
+            "cross_midnight": false,
+            "sequence": 1,
+            "condition_operator": "and"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Notes:
+- a top-level `conditions[]` auto-routes to the v2 branches endpoint
+
+### Update a CRM deal
+
+```json
+{
+  "path_id": 123,
+  "bot_response_id": 456,
+  "crm_deal_id": 77,
+  "changes": {
+    "enabled": true,
+    "is_contact_association": true,
+    "api_body": {
+      "name": "New inbound deal",
+      "crm_pipeline_id": "pipe-1",
+      "crm_stage_id": "stage-1",
+      "creator_id": "user-9",
+      "crm_source_id": "src-1"
+    }
+  }
+}
+```
+
+Notes:
+- `creator_id` / `creator_name` is the deal owner
+- the write targets v1 (`PATCH /v1/bot_responses/{id}/crm_deals/{crm_id}`)
+
+### Attach path-level knowledge sources
+
+```json
+{
+  "path_id": 123,
+  "knowledge_sources": [
+    { "id": 1 },
+    { "id": 2 }
+  ]
+}
+```
+
+Notes:
+- PATH-LEVEL knowledge (`POST /v1/paths/{id}/knowledge-sources`), distinct from node-level ai_assist `knowledge_sources`
 
 ## Payload Constraints
 
