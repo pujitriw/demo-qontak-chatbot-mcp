@@ -194,7 +194,7 @@ Important:
 Note:
 - `content_type_version` should be treated as an opaque value and passed through as provided
 - on CHILD create (`create_bot_response`) the top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id` families are now carried through (previously dropped); a brand-new interactive is created inline via the v1 create path
-- to REUSE an existing bot response instead of authoring content, send `"bot_response": { "id": <int>, "is_reuse": true }` on `create_bot_response` rather than a `content` block
+- to REUSE an existing bot response instead of authoring content, send `"bot_response": { "id": <int>, "is_reuse": true }` on `update_bot_response` (reuse is an update operation; the v1 create endpoint ignores `bot_response`, so it is not available on `create_bot_response`)
 
 Interactive validation (enforced, matches the chatbot dry-schema):
 - supply exactly one of `interactive.button` or `interactive.list`
@@ -464,6 +464,7 @@ Use this shape as the `changes` argument for `update_fallback`.
 
 Important:
 - `assignment` is REQUIRED by the backend; include at least `{ "enabled": false }`
+- when `assignment.enabled` is true, set EXACTLY ONE of `is_auto`, `division.channel_division_id`, or `agent.channel_agent_id` (validated client-side)
 - `channel_integration_id` is injected by the tool
 - the write targets v1 (`PATCH /v1/bot_responses/{bot_response_id}/fallback`)
 
@@ -480,7 +481,8 @@ Important:
 Use this shape as the `changes` argument for `update_ai_agent_response`.
 
 Important:
-- `contentable_type` is fixed to `ai_agent` server-side; `path_id` and `parameters` are optional
+- `content_type_id` is auto-resolved from the `ai_agent` content type when omitted (it is the v3 update's immutable guard); pass it only to override
+- `contentable_type` is NOT sent; the node's stored type (`AiAgent`) is preserved. `path_id` and `parameters` are optional
 - the write targets v3 (`PATCH /v3/bot-responses/{bot_response_id}`)
 
 ### `BranchConditionPayload` (typed `conditions[]`, v2)
@@ -970,25 +972,31 @@ Notes:
 - the FE `action` / call-group field (assign_to_call_group / end_the_call) has no backend counterpart and is omitted
 - `bot_type="voice"` remains a path-level setting, not part of this node payload
 
-### Reuse an existing bot response on child create
+### Reuse an existing bot response (via update_bot_response)
 
 ```json
 {
   "path_id": 123,
-  "parent": {
-    "type": "user_input",
-    "id": 789
-  },
-  "bot_response": {
-    "id": 456,
-    "is_reuse": true
+  "bot_response_id": 456,
+  "changes": {
+    "name": "Linked reply",
+    "content": {
+      "content_text": "(reused)",
+      "content_type_code": "text",
+      "channel_integration_id": 77
+    },
+    "bot_response": {
+      "id": 789,
+      "is_reuse": true
+    }
   }
 }
 ```
 
 Notes:
-- the child links to the existing bot response `456` instead of authoring new content
-- omit `content` when reusing
+- reuse is an UPDATE operation: `update_bot_response` forwards `bot_response: { id, is_reuse: true }` (the v1/v2 update routes accept it; the v1 CREATE endpoint ignores it, so reuse is NOT available on `create_bot_response`)
+- `id` is the existing bot response being reused; this mirrors the FE "reuse bot response" action
+- `update_bot_response` still validates a `content` block, so include a minimal one
 
 ### Create a standalone user input (OCR / multitype)
 

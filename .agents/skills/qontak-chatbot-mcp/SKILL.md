@@ -65,7 +65,7 @@ What the MCP CAN build:
 - media (image, document, video): sent as a `text` node carrying a top-level `attachments[]` array. Media is not a separate content type; it rides on a text node. Attachments now ride along on CHILD create too.
 - CRM deal: a top-level `crm_deal` block, carried on CHILD create now and editable later with `update_crm_deal`.
 - tag: a top-level `tag` list, carried on CHILD create now.
-- reuse: pass `bot_response: { "id": <int>, "is_reuse": true }` on `create_bot_response` to LINK an existing bot response instead of authoring new content.
+- reuse: pass `bot_response: { "id": <int>, "is_reuse": true }` on `update_bot_response` to LINK an existing bot response instead of authoring new content. (Reuse is an update operation — the v1 create endpoint ignores `bot_response`, so it is NOT available on `create_bot_response`.)
 - whatsapp_flow: dedicated `create_whatsapp_flow` and `update_whatsapp_flow` tools. `next_intent_type` accepts `TEXT`/`BUTTON`/`LIST`/`AI_ASSIST`/`BRANCH`; it does NOT support `VOICE` (the backend rejects it).
 - fallback: dedicated `create_fallback` (default fallback reply, `intent_type` `FALLBACK` or `AI_ASSIST`) and `update_fallback` tools.
 - path-level knowledge: `create_path_knowledge_sources` binds knowledge at the path level (distinct from node-level ai_assist `knowledge_sources`).
@@ -114,7 +114,7 @@ Do not use this skill for:
 2. Prefer `workflow_create_path_with_reply`, `workflow_add_branch_with_reply`, and `workflow_change_node_component` for common multi-step tasks.
 3. Treat the current frontend behavior as the primary behavioral contract for conversation editing.
 4. Use `create_root_reply` only for the seeded root node that already exists after path creation.
-5. Use `create_bot_response` only for non-root child creation. It now carries top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id` on child create (a brand-new interactive is created inline through the v1 create path). To REUSE an existing bot response instead of authoring content, pass `bot_response: { "id": <int>, "is_reuse": true }`.
+5. Use `create_bot_response` only for non-root child creation. It now carries top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id` on child create (a brand-new interactive is created inline through the v1 create path). To REUSE an existing bot response instead of authoring content, pass `bot_response: { "id": <int>, "is_reuse": true }` to `update_bot_response` — reuse is not accepted on create.
 6. Use `update_bot_response` and `create_root_reply` to update interactive that already exists, matched by id, and for other advanced component edits such as knowledge sources, API actions, and conversation closure. Conversation closure and file-backed multipart attachments still require an update (not child create).
 7. Inspect both `warnings` and `meta` on every response. They tell you which API and tree version were actually used.
 8. Prefer safe delete defaults unless the user explicitly asks for broader deletion.
@@ -239,7 +239,7 @@ Use these rules without exception unless the user explicitly wants a lower-level
 - use `update_bot_response` or `workflow_change_node_component` for advanced edits on an existing bot response
 - advanced edits include interactive buttons, interactive lists, attachments, CRM payloads, API actions, knowledge sources, AI API knowledge, assignment, idle rules, auto resolve, and conversation closure
 - a brand-new interactive is created inline through `create_bot_response`; `update_bot_response` and `create_root_reply` update interactive that already exists, matched by id
-- child create now also carries top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id`, plus a `bot_response: { id, is_reuse: true }` reuse form; only conversation closure and file-backed multipart attachments still require an update step
+- child create now also carries top-level `interactive`, `attachments`, `crm_deal`, `tag`, `is_purchase_event`, and `organization_entity_id`; only conversation closure and file-backed multipart attachments still require an update step. Reuse (`bot_response: { id, is_reuse: true }`) is carried by `update_bot_response`, not create
 - use `update_crm_deal` to edit an existing CRM deal block (by `crm_deal_id`), and `update_fallback` to edit a fallback (always include `assignment`)
 - if a payload is too advanced for child-create, create the child first and then update it
 

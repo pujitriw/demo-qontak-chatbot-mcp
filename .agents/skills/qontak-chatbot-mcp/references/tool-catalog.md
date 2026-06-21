@@ -175,8 +175,9 @@ Top-level advanced families now carried on CHILD create (previously dropped):
 - `tag`: tag list applied at child create time
 - `is_purchase_event`: boolean purchase-event flag
 - `organization_entity_id`: entity reference
-- `bot_response`: pass `{ "id": <int>, "is_reuse": true }` to REUSE an existing bot response instead of creating new content (the child links to the reused response)
 - these are TOP-LEVEL siblings of `content`/`components`; only conversation-closure and file-backed multipart edits still require `update_bot_response`
+
+Reuse is NOT available on create: the v1 create endpoint ignores `bot_response`. To LINK an existing bot response instead of authoring content, use `update_bot_response` with `bot_response: { "id": <int>, "is_reuse": true }`.
 
 ai_assist support:
 - this tool now creates a knowledge-backed `ai_assist` reply: pass `content.content_type_code="ai_assist"` plus TOP-LEVEL `ai_api_knowledge` and/or `knowledge_sources` (siblings of `content`/`components`)
@@ -244,6 +245,7 @@ Use to edit an existing fallback bot response.
 Notes:
 - writes to `PATCH /v1/bot_responses/{bot_response_id}/fallback` (`meta.api_version_used = "v1"`)
 - the backend rejects the update if `assignment` is missing; always include it (at minimum `{ "enabled": false }`)
+- when `assignment.enabled` is true, set EXACTLY ONE of `is_auto`, `division.channel_division_id`, or `agent.channel_agent_id` — the tool validates this client-side (mirroring the backend) so you get a clear error instead of a 422
 - returns `result.bot_response` and `result.tree`
 
 ### `create_exit_condition(path_id, parent_bot_response_id, exit_condition, is_default=False, preferred_tree_version="v3")`
@@ -254,8 +256,8 @@ Use when you need an exit-condition user input under a bot response (an intent t
 - `name`: optional
 - `description`: optional
 - `trigger`: optional
-- `next_intent_type`: optional; one of `TEXT`, `BUTTON`, `LIST`, `BRANCH`, `AI_AGENT`, `WHATSAPP_FLOW` (auto-uppercased)
-- `ai_agent_id`: required only when `next_intent_type=AI_AGENT`
+- `next_intent_type`: optional; one of `TEXT`, `BUTTON`, `LIST`, `BRANCH`, `AI_AGENT`, `WHATSAPP_FLOW` (auto-uppercased) — drives auto-creation of the downstream intent
+- `ai_agent_id`: optional; the FE includes it for `AI_AGENT` exits. The backend stores `parameters.exit_condition` verbatim but only reads `next_intent_type`, so `ai_agent_id` is persisted, not acted on
 
 Notes:
 - creates a user input with `response_type="exit_condition"` via `POST /v2/user_inputs` (`meta.api_version_used = "v2"`)
@@ -288,12 +290,13 @@ Use to edit an existing `ai_agent` bot response node. Complements `create_ai_age
 - `name`: the node name
 - `contentable_id`: the agent UUID (resolved from `list_ai_agents`)
 - `content_type_version`: the agent content type version
+- `content_type_id`: optional — auto-resolved from the `ai_agent` content type when omitted (it is the v3 update's immutable guard; pass only to override)
 - `path_id`: optional
 - `parameters`: optional
 
 Notes:
 - writes to `PATCH /v3/bot-responses/{bot_response_id}` (`meta.api_version_used = "v3"`)
-- `contentable_type` is fixed to `ai_agent` server-side
+- `contentable_type` is NOT sent; the node's stored type (`AiAgent`) is preserved
 - returns `result.bot_response` and `result.tree`
 
 ### `create_branch_condition(path_id, branch, parent=None, preferred_tree_version="v3")`
@@ -360,6 +363,7 @@ Typed `conditions[]` (NEW; same as create):
 - a top-level `conditions[]` array supports SCHEDULE / CHANNEL / CUSTOMER_FIELD branches with the same `branch_type` + typed sub-object shape documented under `create_branch_condition`
 - supplying `conditions[]` auto-routes the update to the v2 branches endpoint
 - the legacy v1 `api.response_conditions` shape still works unchanged
+- on a v2 `conditions[]` update you do NOT need to set `action_status` yourself — any omitted value is auto-filled (a row WITH an `id` → `UPDATE`, WITHOUT → `CREATE`); set `DELETE` explicitly to remove a row. This guarantees the backend-required `channel.action_status` is always present
 
 Notes:
 - writes to `PATCH /v1/bot_responses/branches/{bot_response_id}` for the legacy v1 shape (`meta.api_version_used = "v1"`); a top-level `conditions[]` auto-routes to the v2 branches endpoint (`meta.api_version_used = "v2"`)
